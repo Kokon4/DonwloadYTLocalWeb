@@ -7,7 +7,14 @@ from urllib.parse import unquote
 from fastapi.testclient import TestClient
 
 from tests.conftest import MakeClient
-from tests.fakes import SONG, FakeVideoSource, PausePoint, fake_mp3_bytes
+from tests.fakes import (
+    SONG,
+    FakeVideoSource,
+    PausePoint,
+    fake_mp3_bytes,
+    fake_mp4_bytes,
+    videoclip,
+)
 
 
 def wait_for(
@@ -187,3 +194,25 @@ def test_failure_while_fetching_leaves_the_download_failed(make_client: MakeClie
 
     assert failed["error_message"]
     assert failed["file_available"] is False
+
+
+def test_mp4_download_delivers_an_mp4_file_at_the_chosen_resolution(make_client: MakeClient) -> None:
+    client = make_client(FakeVideoSource({"dQw4w9WgXcQ": videoclip(1080, 720)}))
+
+    download = create_download(client, "mp4-720")
+    assert download["quality_option"] == {"id": "mp4-720", "label": "MP4 · 720p"}
+    wait_for(client, download["id"], in_state("ready"))
+
+    file = client.get(f"/api/downloads/{download['id']}/file")
+
+    assert file.content == fake_mp4_bytes("dQw4w9WgXcQ", 720)
+    assert unquote(file.headers["content-disposition"]).endswith(".mp4")
+
+
+def test_mp4_option_the_video_does_not_have_is_rejected(make_client: MakeClient) -> None:
+    # SONG no tiene ninguna altura en H.264: no hay Opciones MP4.
+    response = make_client().post(
+        "/api/downloads", json={"video_id": "dQw4w9WgXcQ", "quality_option_id": "mp4-1080"}
+    )
+
+    assert (response.status_code, response.json()) == (422, {"code": "unknown_quality_option"})

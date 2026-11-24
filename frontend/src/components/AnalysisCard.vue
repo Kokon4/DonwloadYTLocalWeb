@@ -1,10 +1,22 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import type { Analysis } from '../api'
+import type { Analysis, QualityKind } from '../api'
 
 const props = defineProps<{ analysis: Analysis; creating: boolean }>()
 const selectedOptionId = defineModel<string>('selectedOptionId', { required: true })
 const emit = defineEmits<{ download: [] }>()
+
+// Las Opciones se muestran agrupadas por formato; un grupo sin Opciones no se muestra.
+const GROUPS: { kind: QualityKind; title: string }[] = [
+  { kind: 'mp3', title: 'Audio (MP3)' },
+  { kind: 'mp4', title: 'Vídeo (MP4)' },
+]
+const groups = computed(() =>
+  GROUPS.map((group) => ({
+    ...group,
+    options: props.analysis.quality_options.filter((o) => o.kind === group.kind),
+  })).filter((group) => group.options.length > 0),
+)
 
 const duration = computed(() => {
   const total = props.analysis.duration_seconds
@@ -21,9 +33,9 @@ const duration = computed(() => {
     <div class="details">
       <h2>{{ analysis.title }}</h2>
       <p class="duration">Duración: {{ duration }}</p>
-      <fieldset>
-        <legend>Opción de calidad</legend>
-        <label v-for="option in analysis.quality_options" :key="option.id" class="option">
+      <fieldset v-for="group in groups" :key="group.kind">
+        <legend>{{ group.title }}</legend>
+        <label v-for="option in group.options" :key="option.id" class="option">
           <input v-model="selectedOptionId" type="radio" name="quality" :value="option.id" />
           {{ option.label }}
         </label>
@@ -62,7 +74,7 @@ h2 {
 fieldset {
   border: none;
   padding: 0;
-  margin: 0;
+  margin: 0 0 0.5rem;
 }
 legend {
   font-weight: 600;

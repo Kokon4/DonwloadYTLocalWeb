@@ -5,7 +5,7 @@ from collections.abc import Iterable
 from pathlib import Path
 from typing import Literal
 
-from app.video_source import FetchPhase, MediaFormat, ProgressCallback, VideoInfo
+from app.video_source import FetchPhase, MediaFormat, Mp3Format, ProgressCallback, VideoInfo
 
 # Puntos de la obtención en los que el test puede dejar "parada" a la Fuente falsa.
 PausePoint = Literal["start", "downloading", "converting"]
@@ -16,7 +16,7 @@ class FakeVideoSource:
 
     - Para cada Vídeo devuelve sus datos o lanza el error indicado.
     - ``fetch`` escribe un archivo pequeño en lugar de descargar nada:
-      empieza → Descargando al 40 % → Convirtiendo → archivo listo.
+      empieza → Descargando al 40 % → Convirtiendo → archivo (.mp3 o .mp4) listo.
     - Con ``pause_at`` la obtención se queda parada en ese punto hasta que el test
       llame a ``release()``.
     - ``late_events`` son avisos de progreso extra que se emiten tras Convirtiendo
@@ -66,8 +66,12 @@ class FakeVideoSource:
             on_progress(phase, percent)
         self._checkpoint("converting")
         info = self.get_video_info(video_id)
-        path = destination_dir / f"{info.title}.mp3"
-        path.write_bytes(fake_mp3_bytes(video_id, media_format.bitrate_kbps))
+        if isinstance(media_format, Mp3Format):
+            path = destination_dir / f"{info.title}.mp3"
+            path.write_bytes(fake_mp3_bytes(video_id, media_format.bitrate_kbps))
+        else:
+            path = destination_dir / f"{info.title}.mp4"
+            path.write_bytes(fake_mp4_bytes(video_id, media_format.resolution))
         return path
 
 
@@ -75,8 +79,22 @@ def fake_mp3_bytes(video_id: str, bitrate_kbps: int) -> bytes:
     return f"fake-mp3:{video_id}:{bitrate_kbps}".encode()
 
 
+def fake_mp4_bytes(video_id: str, resolution: int) -> bytes:
+    return f"fake-mp4:{video_id}:{resolution}p".encode()
+
+
 SONG = VideoInfo(
     title="Artista - Canción (Official Video)",
     thumbnail_url="https://i.ytimg.com/vi/dQw4w9WgXcQ/hqdefault.jpg",
     duration_seconds=213,
 )
+
+
+def videoclip(*h264_resolutions: int) -> VideoInfo:
+    """Un Vídeo disponible en H.264 + AAC en las resoluciones indicadas."""
+    return VideoInfo(
+        title="Videoclip: en directo",
+        thumbnail_url="https://i.ytimg.com/vi/x/hqdefault.jpg",
+        duration_seconds=200,
+        h264_resolutions=h264_resolutions,
+    )

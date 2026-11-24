@@ -3,6 +3,7 @@
 No sabe nada de Opciones de calidad ni de Descargas: solo consulta y obtiene Vídeos.
 """
 
+import re
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -16,6 +17,11 @@ class VideoInfo:
     title: str
     thumbnail_url: str
     duration_seconds: int
+    # Resoluciones (el número de "1080p", "720p"…) en las que el Vídeo existe en H.264 con
+    # audio AAC, la combinación compatible con cualquier reproductor. Es la etiqueta de
+    # calidad de YouTube, no la altura en píxeles: un vídeo con bandas negras de 1920×804
+    # es "1080p". La Fuente solo informa; qué se ofrece lo decide el Análisis.
+    h264_resolutions: tuple[int, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -25,8 +31,15 @@ class Mp3Format:
     bitrate_kbps: int
 
 
-# Formatos que la Fuente de vídeo sabe producir (el MP4 llegará en el #5).
-MediaFormat = Mp3Format
+@dataclass(frozen=True)
+class Mp4Format:
+    """Formato de archivo final: MP4 con vídeo H.264 de la resolución indicada y audio AAC."""
+
+    resolution: int
+
+
+# Formatos que la Fuente de vídeo sabe producir.
+MediaFormat = Mp3Format | Mp4Format
 
 
 # Fase en la que está la obtención de un archivo y, si se conoce, su porcentaje.
@@ -123,6 +136,7 @@ class YtDlpVideoSource:
             title=raw_info["title"],
             thumbnail_url=raw_info["thumbnail"],
             duration_seconds=int(raw_info["duration"]),
+            h264_resolutions=_h264_resolutions(raw_info.get("formats") or []),
         )
 
     def fetch(
@@ -134,29 +148,33 @@ class YtDlpVideoSource:
     ) -> Path:
         import yt_dlp
 
-        download_finished = False
+        plan = _plan_for(media_format)
+        finished_parts = 0
 
         def progress_hook(event: dict[str, Any]) -> None:
-            nonlocal download_finished
+            nonlocal finished_parts
             if event["status"] == "downloading":
                 total = event.get("total_bytes") or event.get("total_bytes_estimate")
                 done = event.get("downloaded_bytes")
-                percent = round(done / total * 100, 1) if total and done is not None else None
-                on_progress("downloading", percent)
+                if total and done is not None:
+                    # Progreso global sumando las partes, para que no vuelva a 0 entre ellas.
+                    percent = (finished_parts + done / total) / plan.parts * 100
+                    on_progress("downloading", round(min(percent, 100.0), 1))
+                else:
+                    on_progress("downloading", None)
             elif event["status"] == "finished":
-                download_finished = True
+                finished_parts += 1
 
         def postprocessor_hook(event: dict[str, Any]) -> None:
             # La conversión de la miniatura corre antes de descargar: no es "Convirtiendo".
-            if event["status"] == "started" and download_finished:
+            if event["status"] == "started" and finished_parts >= plan.parts:
                 on_progress("converting", None)
 
         options: dict[str, Any] = {
             "quiet": True,
             "no_warnings": True,
             "noprogress": True,
-            # Solo la pista de audio: luego ffmpeg la convierte a MP3.
-            "format": "bestaudio/best",
+            "format": plan.selector,
             "outtmpl": str(destination_dir / "%(title)s.%(ext)s"),
             # Nombres válidos también en Windows (sin : ? * " < > |).
             "windowsfilenames": True,
@@ -164,18 +182,16 @@ class YtDlpVideoSource:
             "progress_hooks": [progress_hook],
             "postprocessor_hooks": [postprocessor_hook],
             "postprocessors": [
-                {
-                    "key": "FFmpegExtractAudio",
-                    "preferredcodec": "mp3",
-                    "preferredquality": str(media_format.bitrate_kbps),
-                },
-                # Las miniaturas de YouTube suelen ser .webp; el MP3 necesita JPG para la carátula.
+                *plan.postprocessors,
+                # Las miniaturas de YouTube suelen ser .webp; para la carátula hace falta JPG.
                 {"key": "FFmpegThumbnailsConvertor", "format": "jpg", "when": "before_dl"},
                 # Título y artista: usa los datos de canción de YouTube si existen,
-                # si no, el título del Vídeo y el nombre del canal.
-                {"key": "FFmpegMetadata", "add_metadata": True},
+                # si no, el título del Vídeo y el nombre del canal. Sin capítulos: añaden una
+                # pista de datos que descoloca la carátula del MP4 (deja de marcarse como portada).
+                {"key": "FFmpegMetadata", "add_metadata": True, "add_chapters": False},
                 {"key": "EmbedThumbnail"},
             ],
+            **plan.extra_options,
         }
         try:
             with yt_dlp.YoutubeDL(options) as ydl:
@@ -185,5 +201,64 @@ class YtDlpVideoSource:
         except yt_dlp.utils.DownloadError as error:
             raise VideoSourceError(str(error)) from error
 
-        # Ruta final, ya convertida a MP3.
+        # Ruta del archivo final (ya convertido o unido).
         return Path(raw_info["requested_downloads"][0]["filepath"])
+
+
+@dataclass(frozen=True)
+class _FormatPlan:
+    """Cómo pedirle a yt-dlp un formato final concreto."""
+
+    # Selector de formatos de yt-dlp.
+    selector: str
+    # Cuántas partes se descargan (para calcular el progreso global).
+    parts: int
+    # Postprocesadores propios del formato (los comunes los añade ``fetch``).
+    postprocessors: list[dict[str, Any]]
+    extra_options: dict[str, Any]
+
+
+def _plan_for(media_format: MediaFormat) -> _FormatPlan:
+    if isinstance(media_format, Mp3Format):
+        return _FormatPlan(
+            # Solo la pista de audio: luego ffmpeg la convierte a MP3.
+            selector="bestaudio/best",
+            parts=1,
+            postprocessors=[
+                {
+                    "key": "FFmpegExtractAudio",
+                    "preferredcodec": "mp3",
+                    "preferredquality": str(media_format.bitrate_kbps),
+                }
+            ],
+            extra_options={},
+        )
+    return _FormatPlan(
+        # Vídeo H.264 con esa etiqueta de calidad ("720p", "720p60"…) + audio AAC (m4a).
+        selector=f"bv*[vcodec^=avc1][format_note^={media_format.resolution}p]+ba[ext=m4a]",
+        # Vídeo y audio se bajan por separado y ffmpeg los une en un MP4 sin recomprimir.
+        parts=2,
+        postprocessors=[],
+        extra_options={"merge_output_format": "mp4"},
+    )
+
+
+# Etiqueta de calidad de YouTube: "1080p", "720p60", "1080p HDR"…
+_QUALITY_LABEL = re.compile(r"(\d+)p")
+
+
+def _h264_resolutions(formats: list[dict[str, Any]]) -> tuple[int, ...]:
+    """Resoluciones en las que YouTube ofrece el vídeo en H.264 ("avc1") con audio AAC."""
+    has_aac_audio = any(
+        f.get("ext") == "m4a" and f.get("vcodec") == "none" for f in formats
+    )
+    if not has_aac_audio:
+        return ()
+    resolutions = set()
+    for f in formats:
+        if not str(f.get("vcodec") or "").startswith("avc1"):
+            continue
+        label = _QUALITY_LABEL.match(str(f.get("format_note") or ""))
+        if label:
+            resolutions.add(int(label.group(1)))
+    return tuple(sorted(resolutions, reverse=True))

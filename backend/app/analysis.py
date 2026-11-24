@@ -12,6 +12,7 @@ from app.video_source import (
     LiveVideoError,
     MediaFormat,
     Mp3Format,
+    Mp4Format,
     VideoSource,
     VideoSourceError,
     VideoUnavailableError,
@@ -78,6 +79,25 @@ MP3_OPTIONS = [
 ]
 
 
+# Resoluciones MP4 que se ofrecen si el Vídeo las tiene en H.264 + AAC. Las menores (144p,
+# 240p) no tienen sentido para música o entretenimiento; las mayores (1440p, 4K) no existen
+# en H.264 en YouTube. Decisión del ticket #5, recogida en la spec (issue #1).
+MP4_RESOLUTIONS = (1080, 720, 480, 360)
+
+
+def mp4_options(h264_resolutions: tuple[int, ...]) -> list[QualityOption]:
+    return [
+        QualityOption(
+            id=f"mp4-{resolution}",
+            kind="mp4",
+            label=f"MP4 · {resolution}p",
+            media_format=Mp4Format(resolution=resolution),
+        )
+        for resolution in MP4_RESOLUTIONS
+        if resolution in h264_resolutions
+    ]
+
+
 def analyze_link(url: str, video_source: VideoSource) -> Analysis:
     try:
         video_id = video_id_from_link(url)
@@ -102,5 +122,5 @@ def analyze_video(video_id: str, video_source: VideoSource) -> Analysis:
         title=info.title,
         thumbnail_url=info.thumbnail_url,
         duration_seconds=info.duration_seconds,
-        quality_options=list(MP3_OPTIONS),
+        quality_options=[*MP3_OPTIONS, *mp4_options(info.h264_resolutions)],
     )
