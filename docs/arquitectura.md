@@ -158,6 +158,11 @@ stateDiagram-v2
   - si estaba **en curso**, la Fuente de vídeo pregunta "¿me han cancelado?" (`is_cancelled()`) antes de empezar y en cada aviso de progreso de yt-dlp, y aborta;
   - **la conversión de ffmpeg no se puede cortar a medias**: si se cancela mientras convierte, la Descarga aparece Cancelada al momento, pero su hilo termina ese paso, descarta el resultado y solo entonces libera el hueco. Convertir una canción tarda unos segundos (y unir un MP4 es casi instantáneo, porque no recomprime); solo en sesiones de horas se nota la espera;
   - en todos los casos se borran los archivos parciales.
+- **Limpieza** (para que el disco nunca se llene):
+  - al **arrancar** se vacía la carpeta temporal (sus Descargas ya no existen, porque el estado vive en memoria);
+  - un archivo **Listo que nadie recoge caduca a la hora**: deja de estar disponible (la entrega responde 410) y se borra;
+  - una Descarga **desaparece de la lista 1 hora después de que ya no le quede nada pendiente**: al quedar Fallida o Cancelada, o cuando su archivo se recoge o caduca. Las que están en curso nunca desaparecen;
+  - la limpieza se hace en cada petición a la API y, además, cada minuto en segundo plano. El reloj se inyecta en la app, así los tests pueden "adelantar el tiempo" sin esperar.
 - Por dentro, el Gestor de Descargas tiene un grupo fijo de 3 hilos trabajadores con una cola por orden de llegada. En cuanto un hilo coge una Descarga, esta pasa a Descargando, aunque todavía no se sepa el porcentaje: Pendiente significa solo "esperando turno".
 
 ---
@@ -271,5 +276,5 @@ flowchart TB
 | 1 · Piezas: Frontend, API, Análisis, Fuente de vídeo | #2 (esqueleto) ✅, #3 (rechazos) ✅ |
 | 2 · Recorrido completo y Gestor de Descargas | #4 (primera Descarga MP3) ✅, #5 (MP4) ✅ |
 | 3 · Estados: cola, cancelar, reintentar | #6 ✅, #7 ✅, #8 ✅ |
-| 3 · Limpieza y caducidad | #9 |
+| 3 · Limpieza y caducidad | #9 ✅ |
 | 4 · Docker y modo uso | #10 |

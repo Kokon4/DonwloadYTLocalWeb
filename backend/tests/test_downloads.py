@@ -1,5 +1,5 @@
 import time
-from collections.abc import Callable, Iterator
+from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Literal
@@ -7,7 +7,6 @@ from urllib.parse import unquote
 
 import pytest
 from fastapi.testclient import TestClient
-from httpx import Response
 
 from app.video_source import VideoSourceError, VideoUnavailableError
 from tests.conftest import MakeClient
@@ -19,36 +18,7 @@ from tests.fakes import (
     fake_mp4_bytes,
     videoclip,
 )
-
-
-def wait_for(
-    client: TestClient, download_id: int, done: Callable[[dict[str, Any]], bool]
-) -> dict[str, Any]:
-    """Consulta la Descarga (como hace la web) hasta que cumpla la condición."""
-    deadline = time.monotonic() + 5
-    while True:
-        body: dict[str, Any] = client.get(f"/api/downloads/{download_id}").json()
-        if done(body):
-            return body
-        assert time.monotonic() < deadline, f"la Descarga no llegó al estado esperado: {body}"
-        time.sleep(0.01)
-
-
-def in_state(state: str) -> Callable[[dict[str, Any]], bool]:
-    return lambda d: d["state"] == state
-
-
-def create_download(client: TestClient, option_id: str = "mp3-192") -> dict[str, Any]:
-    response = client.post(
-        "/api/downloads", json={"video_id": "dQw4w9WgXcQ", "quality_option_id": option_id}
-    )
-    assert response.status_code == 201, response.text
-    body: dict[str, Any] = response.json()
-    return body
-
-
-def paused_at(point: PausePoint) -> FakeVideoSource:
-    return FakeVideoSource({"dQw4w9WgXcQ": SONG}, pause_at=point)
+from tests.helpers import cancel, create_download, in_state, paused_at, retry, wait_for
 
 
 def test_mp3_download_is_created_becomes_ready_and_delivers_the_file(
@@ -224,7 +194,6 @@ def test_mp4_option_the_video_does_not_have_is_rejected(make_client: MakeClient)
     assert (response.status_code, response.json()) == (422, {"code": "unknown_quality_option"})
 
 
-
 @contextmanager
 def five_downloads_three_running(
     make_client: MakeClient, fetch_error: Exception | None = None
@@ -279,11 +248,6 @@ def test_failed_download_also_frees_its_slot(make_client: MakeClient) -> None:
         current = states(client, downloads)
         assert current[:3].count("failed") == 1
         assert current[3:] == ["downloading", "pending"]
-
-
-def cancel(client: TestClient, download: dict[str, Any]) -> Response:
-    response: Response = client.post(f"/api/downloads/{download['id']}/cancel")
-    return response
 
 
 def test_cancelling_a_pending_download_means_it_never_starts(
@@ -399,11 +363,6 @@ def test_failed_download_tells_why_it_failed(
 
     assert failed["failure_code"] == code
     assert failed["file_available"] is False
-
-
-def retry(client: TestClient, download: dict[str, Any]) -> Response:
-    response: Response = client.post(f"/api/downloads/{download['id']}/retry")
-    return response
 
 
 def test_retrying_a_failed_download_creates_a_new_one_that_can_succeed(

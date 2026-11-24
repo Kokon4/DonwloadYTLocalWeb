@@ -9,11 +9,14 @@ import {
 } from './api'
 
 const POLL_INTERVAL_MS = 1000
+// Sin Descargas en curso se sigue preguntando, despacio, para reflejar archivos que
+// caducan y Descargas que desaparecen de la lista (ver #9).
+const IDLE_POLL_INTERVAL_MS = 30_000
 
 /**
  * Lista de Descargas del servidor, consultada por polling (ver ADR 0001).
  *
- * Mientras haya alguna Descarga sin terminar, se pregunta cada segundo. Cuando una
+ * Mientras haya alguna Descarga sin terminar, se pregunta cada segundo; si no, cada 30 s. Cuando una
  * Descarga que esta página vio en curso pasa a Lista, el navegador guarda el archivo
  * automáticamente. Las que ya estaban Listas al cargar la página no se guardan solas
  * (para no repetir descargas al recargar): para esas queda el botón "Guardar".
@@ -77,13 +80,12 @@ export function useDownloads() {
     }
   }
 
-  /** Programa la próxima consulta si queda alguna Descarga sin terminar. */
+  /** Programa la próxima consulta: rápida si queda alguna Descarga sin terminar. */
   function schedule() {
     if (stopped) return
     if (timer) clearTimeout(timer)
-    timer = null
     const anyInProgress = downloads.value.some((d) => !TERMINAL_STATES.includes(d.state))
-    if (anyInProgress) timer = setTimeout(refresh, POLL_INTERVAL_MS)
+    timer = setTimeout(refresh, anyInProgress ? POLL_INTERVAL_MS : IDLE_POLL_INTERVAL_MS)
   }
 
   /** Añade una Descarga recién creada y reactiva el polling. */

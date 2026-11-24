@@ -1,6 +1,7 @@
 """Piezas falsas compartidas por los tests."""
 
 import threading
+from datetime import UTC, datetime, timedelta
 import time
 from collections.abc import Callable, Iterable
 from pathlib import Path
@@ -140,3 +141,16 @@ def videoclip(*h264_resolutions: int) -> VideoInfo:
         duration_seconds=200,
         h264_resolutions=h264_resolutions,
     )
+
+
+class FakeClock:
+    """Reloj falso: el tiempo solo avanza cuando el test llama a ``advance``."""
+
+    def __init__(self) -> None:
+        self._now = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
+
+    def now(self) -> datetime:
+        return self._now
+
+    def advance(self, **delta: float) -> None:
+        self._now += timedelta(**delta)

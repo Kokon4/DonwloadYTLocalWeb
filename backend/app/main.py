@@ -1,7 +1,7 @@
 """API HTTP: capa fina que traduce peticiones del navegador en llamadas a la lógica de la app."""
 
 from dataclasses import asdict
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal
 
@@ -10,7 +10,13 @@ from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
 
 from app.analysis import AnalysisError, analyze_link
-from app.downloads import DownloadError, DownloadErrorCode, DownloadManager, DownloadSnapshot
+from app.downloads import (
+    Clock,
+    DownloadError,
+    DownloadErrorCode,
+    DownloadManager,
+    DownloadSnapshot,
+)
 from app.video_source import VideoSource
 
 
@@ -82,9 +88,11 @@ DOWNLOAD_ERROR_STATUS: dict[DownloadErrorCode, int] = {
 }
 
 
-def create_app(video_source: VideoSource, temp_dir: Path) -> FastAPI:
+def create_app(
+    video_source: VideoSource, temp_dir: Path, clock: Clock = lambda: datetime.now(UTC)
+) -> FastAPI:
     app = FastAPI(title="DownloadYTLocalWeb")
-    downloads = DownloadManager(video_source, temp_dir)
+    downloads = DownloadManager(video_source, temp_dir, clock)
 
     # Todos los errores de la app responden {"code": ...}; la web elige el mensaje.
     @app.exception_handler(AnalysisError)
