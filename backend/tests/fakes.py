@@ -17,8 +17,8 @@ class FakeVideoSource:
     - Para cada Vídeo devuelve sus datos o lanza el error indicado.
     - ``fetch`` escribe un archivo pequeño en lugar de descargar nada:
       empieza → Descargando al 40 % → Convirtiendo → archivo (.mp3 o .mp4) listo.
-    - Con ``pause_at`` la obtención se queda parada en ese punto hasta que el test
-      llame a ``release()``.
+    - Con ``pause_at`` cada obtención se queda parada en ese punto hasta que el test
+      llame a ``release()``, que deja continuar a una sola (o a ``count``).
     - ``late_events`` son avisos de progreso extra que se emiten tras Convirtiendo
       (para comprobar que una Descarga nunca retrocede).
     """
@@ -34,14 +34,14 @@ class FakeVideoSource:
         self.pause_at = pause_at
         self.fetch_error = fetch_error
         self.late_events = list(late_events)
-        self._released = threading.Event()
+        self._releases = threading.Semaphore(0)
 
-    def release(self) -> None:
-        self._released.set()
+    def release(self, count: int = 1) -> None:
+        self._releases.release(count)
 
     def _checkpoint(self, point: PausePoint) -> None:
         if self.pause_at == point:
-            assert self._released.wait(timeout=5), "el test no liberó la Fuente falsa"
+            assert self._releases.acquire(timeout=5), "el test no liberó la Fuente falsa"
 
     def get_video_info(self, video_id: str) -> VideoInfo:
         result = self.videos[video_id]

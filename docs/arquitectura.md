@@ -150,6 +150,7 @@ stateDiagram-v2
 - **Lista, Fallida y Cancelada** son estados **terminales**: ya no cambian.
 - **Reintentar** no "resucita" una Descarga Fallida o Cancelada: crea una **Descarga nueva** con el mismo Vídeo y la misma Opción de calidad. Así cada Descarga tiene una historia simple y lineal.
 - Cuando una Descarga llega a un estado terminal, libera su hueco y la Pendiente más antigua arranca.
+- Por dentro, el Gestor de Descargas tiene un grupo fijo de 3 hilos trabajadores con una cola por orden de llegada. En cuanto un hilo coge una Descarga, esta pasa a Descargando, aunque todavía no se sepa el porcentaje: Pendiente significa solo "esperando turno".
 
 ---
 
@@ -261,6 +262,6 @@ flowchart TB
 |---|---|
 | 1 · Piezas: Frontend, API, Análisis, Fuente de vídeo | #2 (esqueleto) ✅, #3 (rechazos) ✅ |
 | 2 · Recorrido completo y Gestor de Descargas | #4 (primera Descarga MP3) ✅, #5 (MP4) ✅ |
-| 3 · Estados: cola, cancelar, reintentar | #6, #7, #8 |
+| 3 · Estados: cola, cancelar, reintentar | #6 ✅, #7, #8 |
 | 3 · Limpieza y caducidad | #9 |
 | 4 · Docker y modo uso | #10 |

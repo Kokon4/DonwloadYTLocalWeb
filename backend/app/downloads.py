@@ -1,7 +1,8 @@
 """Gestor de Descargas: crea Descargas, las ejecuta en segundo plano y controla sus estados.
 
-Todo vive en memoria (ver ADR 0001). Cada Descarga se ejecuta en su propio hilo; el
-límite de Descargas en paralelo llegará en el #6.
+Todo vive en memoria (ver ADR 0001). Las Descargas se ejecutan en un grupo fijo de
+MAX_PARALLEL_DOWNLOADS hilos: si todos están ocupados, la Descarga espera Pendiente en
+una cola por orden de llegada y arranca sola cuando un hilo queda libre.
 
 Como varios hilos tocan la misma Descarga (el que la ejecuta y los que atienden
 peticiones HTTP), cada Descarga protege sus cambios con su propio lock y solo se
@@ -10,6 +11,8 @@ para que nadie lea un estado a medio cambiar.
 """
 
 import itertools
+import logging
+import queue
 import shutil
 import threading
 from dataclasses import dataclass
@@ -34,6 +37,11 @@ class DownloadState(StrEnum):
     READY = "ready"
     FAILED = "failed"
 
+
+logger = logging.getLogger(__name__)
+
+# Cuántas Descargas avanzan a la vez: evita saturar la conexión o que YouTube limite.
+MAX_PARALLEL_DOWNLOADS = 3
 
 # Orden en el que avanza una Descarga; nunca vuelve a un estado anterior.
 _ORDER = [
@@ -103,6 +111,16 @@ class Download:
                 file_available=self._file_available,
             )
 
+    def start(self) -> None:
+        """Un hilo ha cogido la Descarga: deja de estar Pendiente.
+
+        Todavía no se conoce el porcentaje (yt-dlp tarda un poco en consultar YouTube).
+        """
+        with self._lock:
+            if self._state is DownloadState.PENDING:
+                self._state = DownloadState.DOWNLOADING
+                self._progress = None
+
     def advance(self, phase: FetchPhase, percent: float | None) -> None:
         """Aplica un aviso de progreso. Los avisos que harían retroceder se ignoran."""
         target = DownloadState.DOWNLOADING if phase == "downloading" else DownloadState.CONVERTING
@@ -143,6 +161,14 @@ class DownloadManager:
         self._downloads: dict[int, Download] = {}
         self._ids = itertools.count(1)
         self._lock = threading.Lock()
+        # Cola por orden de llegada; lo que espera en ella está Pendiente.
+        self._queue: queue.Queue[Download] = queue.Queue()
+        # Hilos "daemon": al parar la app no se espera a que terminen, y las Descargas en
+        # curso y Pendientes se abandonan (ver ADR 0001).
+        for number in range(1, MAX_PARALLEL_DOWNLOADS + 1):
+            threading.Thread(
+                target=self._work, name=f"download-worker-{number}", daemon=True
+            ).start()
 
     def create(self, video_id: str, quality_option_id: str) -> DownloadSnapshot:
         """Crea una Descarga y la lanza en segundo plano.
@@ -160,7 +186,7 @@ class DownloadManager:
                 download_id, video_id, analysis.title, option, self._temp_dir / str(download_id)
             )
             self._downloads[download_id] = download
-        threading.Thread(target=self._run, args=(download,), daemon=True).start()
+        self._queue.put(download)
         return download.snapshot()
 
     def list(self) -> list[DownloadSnapshot]:
@@ -187,8 +213,14 @@ class DownloadManager:
             raise DownloadError("download_not_found")
         return download
 
+    def _work(self) -> None:
+        """Bucle de cada hilo trabajador: coge la Descarga Pendiente más antigua y la ejecuta."""
+        while True:
+            self._run(self._queue.get())
+
     def _run(self, download: Download) -> None:
         try:
+            download.start()
             download.work_dir.mkdir(parents=True, exist_ok=True)
             path = self._video_source.fetch(
                 download.video_id,
@@ -196,8 +228,9 @@ class DownloadManager:
                 download.work_dir,
                 download.advance,
             )
+            download.mark_ready(path)
         except Exception:
+            # Se registra la causa real en el log del servidor; el usuario ve un mensaje genérico.
+            logger.exception("La Descarga %s falló", download.id)
             download.mark_failed("No se pudo completar la Descarga.")
             shutil.rmtree(download.work_dir, ignore_errors=True)
-            return
-        download.mark_ready(path)

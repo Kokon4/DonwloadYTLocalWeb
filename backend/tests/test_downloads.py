@@ -1,5 +1,6 @@
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 from urllib.parse import unquote
@@ -71,14 +72,16 @@ def test_mp3_download_is_created_becomes_ready_and_delivers_the_file(
     assert unquote(disposition.split("filename*=utf-8''")[1]) == "Artista - Canción (Official Video).mp3"
 
 
-def test_new_download_is_pending_until_it_starts(make_client: MakeClient) -> None:
+def test_download_is_downloading_as_soon_as_it_gets_its_turn(make_client: MakeClient) -> None:
+    # Pendiente significa "esperando turno": en cuanto arranca pasa a Descargando,
+    # aunque todavía no se conozca el porcentaje.
     source = paused_at("start")
     client = make_client(source)
 
     download = create_download(client)
+    started = wait_for(client, download["id"], in_state("downloading"))
 
-    assert download["state"] == "pending"
-    assert client.get(f"/api/downloads/{download['id']}").json()["state"] == "pending"
+    assert started["progress"] is None
     source.release()
     wait_for(client, download["id"], in_state("ready"))
 
@@ -216,3 +219,60 @@ def test_mp4_option_the_video_does_not_have_is_rejected(make_client: MakeClient)
     )
 
     assert (response.status_code, response.json()) == (422, {"code": "unknown_quality_option"})
+
+
+
+@contextmanager
+def five_downloads_three_running(
+    make_client: MakeClient, fetch_error: Exception | None = None
+) -> Iterator[tuple[TestClient, FakeVideoSource, list[dict[str, Any]]]]:
+    """Crea 5 Descargas con la Fuente falsa parada en Descargando y espera a que 3 avancen.
+
+    Al salir libera siempre todas las obtenciones, aunque el test falle, para no dejar
+    hilos esperando.
+    """
+    source = FakeVideoSource({"dQw4w9WgXcQ": SONG}, pause_at="downloading", fetch_error=fetch_error)
+    client = make_client(source)
+    try:
+        downloads = [create_download(client) for _ in range(5)]
+        for running in downloads[:3]:
+            wait_for(client, running["id"], in_state("downloading"))
+        yield client, source, downloads
+    finally:
+        source.release(5)
+
+
+def states(client: TestClient, downloads: list[dict[str, Any]]) -> list[str]:
+    """Estado actual de cada Descarga, en el mismo orden."""
+    return [client.get(f"/api/downloads/{d['id']}").json()["state"] for d in downloads]
+
+
+def test_at_most_three_downloads_run_at_the_same_time(make_client: MakeClient) -> None:
+    with five_downloads_three_running(make_client) as (client, _, downloads):
+        time.sleep(0.1)  # margen por si una cuarta arrancara indebidamente
+
+        assert states(client, downloads) == ["downloading"] * 3 + ["pending"] * 2
+
+
+def test_oldest_pending_download_starts_when_a_running_one_finishes(
+    make_client: MakeClient,
+) -> None:
+    with five_downloads_three_running(make_client) as (client, source, downloads):
+        source.release()  # termina una de las tres en curso
+        wait_for(client, downloads[3]["id"], in_state("downloading"))
+
+        current = states(client, downloads)
+        assert current[:3].count("ready") == 1
+        assert current[:3].count("downloading") == 2
+        assert current[3:] == ["downloading", "pending"]
+
+
+def test_failed_download_also_frees_its_slot(make_client: MakeClient) -> None:
+    error = RuntimeError("ffmpeg falló")
+    with five_downloads_three_running(make_client, fetch_error=error) as (client, source, downloads):
+        source.release()  # una de las tres en curso falla
+        wait_for(client, downloads[3]["id"], in_state("downloading"))
+
+        current = states(client, downloads)
+        assert current[:3].count("failed") == 1
+        assert current[3:] == ["downloading", "pending"]
