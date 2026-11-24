@@ -7,6 +7,7 @@
   --accent: #d4242b;
   --accent-text: #ffffff;
   --danger: #b3261e;
+  --success: #1e7f3c;
 
   font: 16px/1.5 system-ui, 'Segoe UI', Roboto, sans-serif;
   color-scheme: light dark;
@@ -21,6 +22,7 @@
     --border: #36363b;
     --accent: #ef4444;
     --danger: #f2817a;
+    --success: #6fd08c;
   }
 }
 

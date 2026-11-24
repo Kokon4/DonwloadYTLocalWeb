@@ -3,8 +3,10 @@
 No sabe nada de Opciones de calidad ni de Descargas: solo consulta y obtiene Vídeos.
 """
 
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, Protocol
+from pathlib import Path
+from typing import Any, Literal, Protocol
 
 
 @dataclass(frozen=True)
@@ -14,6 +16,22 @@ class VideoInfo:
     title: str
     thumbnail_url: str
     duration_seconds: int
+
+
+@dataclass(frozen=True)
+class Mp3Format:
+    """Formato de archivo final: MP3 al bitrate indicado (solo se baja la pista de audio)."""
+
+    bitrate_kbps: int
+
+
+# Formatos que la Fuente de vídeo sabe producir (el MP4 llegará en el #5).
+MediaFormat = Mp3Format
+
+
+# Fase en la que está la obtención de un archivo y, si se conoce, su porcentaje.
+FetchPhase = Literal["downloading", "converting"]
+ProgressCallback = Callable[[FetchPhase, float | None], None]
 
 
 class LiveVideoError(Exception):
@@ -34,6 +52,20 @@ class VideoSource(Protocol):
     def get_video_info(self, video_id: str) -> VideoInfo:
         """Lanza LiveVideoError o VideoUnavailableError si el Vídeo no se puede descargar,
         y VideoSourceError si falla la consulta por cualquier otro motivo."""
+        ...
+
+    def fetch(
+        self,
+        video_id: str,
+        media_format: MediaFormat,
+        destination_dir: Path,
+        on_progress: ProgressCallback,
+    ) -> Path:
+        """Obtiene el archivo final del Vídeo en ``destination_dir`` y devuelve su ruta.
+
+        Informa del avance con ``on_progress``. El nombre del archivo es el título del
+        Vídeo, saneado para el sistema de archivos.
+        """
         ...
 
 
@@ -92,3 +124,66 @@ class YtDlpVideoSource:
             thumbnail_url=raw_info["thumbnail"],
             duration_seconds=int(raw_info["duration"]),
         )
+
+    def fetch(
+        self,
+        video_id: str,
+        media_format: MediaFormat,
+        destination_dir: Path,
+        on_progress: ProgressCallback,
+    ) -> Path:
+        import yt_dlp
+
+        download_finished = False
+
+        def progress_hook(event: dict[str, Any]) -> None:
+            nonlocal download_finished
+            if event["status"] == "downloading":
+                total = event.get("total_bytes") or event.get("total_bytes_estimate")
+                done = event.get("downloaded_bytes")
+                percent = round(done / total * 100, 1) if total and done is not None else None
+                on_progress("downloading", percent)
+            elif event["status"] == "finished":
+                download_finished = True
+
+        def postprocessor_hook(event: dict[str, Any]) -> None:
+            # La conversión de la miniatura corre antes de descargar: no es "Convirtiendo".
+            if event["status"] == "started" and download_finished:
+                on_progress("converting", None)
+
+        options: dict[str, Any] = {
+            "quiet": True,
+            "no_warnings": True,
+            "noprogress": True,
+            # Solo la pista de audio: luego ffmpeg la convierte a MP3.
+            "format": "bestaudio/best",
+            "outtmpl": str(destination_dir / "%(title)s.%(ext)s"),
+            # Nombres válidos también en Windows (sin : ? * " < > |).
+            "windowsfilenames": True,
+            "writethumbnail": True,
+            "progress_hooks": [progress_hook],
+            "postprocessor_hooks": [postprocessor_hook],
+            "postprocessors": [
+                {
+                    "key": "FFmpegExtractAudio",
+                    "preferredcodec": "mp3",
+                    "preferredquality": str(media_format.bitrate_kbps),
+                },
+                # Las miniaturas de YouTube suelen ser .webp; el MP3 necesita JPG para la carátula.
+                {"key": "FFmpegThumbnailsConvertor", "format": "jpg", "when": "before_dl"},
+                # Título y artista: usa los datos de canción de YouTube si existen,
+                # si no, el título del Vídeo y el nombre del canal.
+                {"key": "FFmpegMetadata", "add_metadata": True},
+                {"key": "EmbedThumbnail"},
+            ],
+        }
+        try:
+            with yt_dlp.YoutubeDL(options) as ydl:
+                raw_info: dict[str, Any] = ydl.extract_info(
+                    f"https://www.youtube.com/watch?v={video_id}", download=True
+                )
+        except yt_dlp.utils.DownloadError as error:
+            raise VideoSourceError(str(error)) from error
+
+        # Ruta final, ya convertida a MP3.
+        return Path(raw_info["requested_downloads"][0]["filepath"])

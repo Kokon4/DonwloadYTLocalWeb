@@ -1,15 +1,9 @@
 import pytest
-from fastapi.testclient import TestClient
-
-from app.main import create_app
+from tests.conftest import MakeClient
 from tests.fakes import SONG, FakeVideoSource
 
 
-def make_client(source: FakeVideoSource) -> TestClient:
-    return TestClient(create_app(video_source=source))
-
-
-def test_analysis_of_watch_link_returns_video_data_and_mp3_options() -> None:
+def test_analysis_of_watch_link_returns_video_data_and_mp3_options(make_client: MakeClient) -> None:
     source = FakeVideoSource({"dQw4w9WgXcQ": SONG})
     client = make_client(source)
 
@@ -42,7 +36,7 @@ def test_analysis_of_watch_link_returns_video_data_and_mp3_options() -> None:
         "youtube.com/watch?v=dQw4w9WgXcQ",
     ],
 )
-def test_every_accepted_link_form_analyzes_the_same_video(link: str) -> None:
+def test_every_accepted_link_form_analyzes_the_same_video(link: str, make_client: MakeClient) -> None:
     source = FakeVideoSource({"dQw4w9WgXcQ": SONG})
     client = make_client(source)
 

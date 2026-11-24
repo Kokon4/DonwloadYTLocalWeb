@@ -74,24 +74,28 @@ sequenceDiagram
     U->>V: Elige una Opción de calidad
     V->>A: POST /api/downloads
     A->>G: crear Descarga
+    G->>AN: volver a analizar el Vídeo
+    AN-->>G: título + Opciones (¿existe la elegida?)
     G-->>A: Descarga Pendiente (id 7)
     A-->>V: 201 Descarga creada
-    G->>F: obtener archivo (en segundo plano)
-    F->>Y: baja el contenido
+    G->>F: obtener archivo (en un hilo aparte)
+    F->>Y: baja solo el audio
+    F-->>G: progreso (Descargando 40 %…, Convirtiendo)
 
-    loop Polling cada ~1 segundo
-        V->>A: GET /api/downloads/7
-        A-->>V: estado y % de progreso
+    loop Polling cada ~1 segundo, mientras alguna Descarga no haya terminado
+        V->>A: GET /api/downloads
+        A-->>V: lista con estado y % de cada Descarga
     end
 
-    F-->>G: archivo listo
+    F-->>G: archivo MP3 listo (con carátula y etiquetas)
     Note over G: la Descarga pasa a Lista
 
     Note over U,Y: Paso 3 · Entrega
     V->>A: GET /api/downloads/7/file
+    Note over G: el archivo queda reservado: otra petición recibiría 410
     A-->>V: el archivo
     V-->>U: Se guarda en tu carpeta de descargas
-    Note over G: el temporal se borra
+    Note over G: al terminar el envío, el temporal se borra
 ```
 
 **Rechazos del Análisis.** Cada motivo tiene un código que la web traduce a un mensaje en español:
@@ -105,6 +109,17 @@ sequenceDiagram
 | `source_failed` (HTTP 502) | Fuente de vídeo | Falla YouTube o yt-dlp, no el Vídeo: sin conexión o yt-dlp desactualizado. |
 
 Los cuatro primeros responden 422 (el problema es lo que se pidió); `source_failed` responde 502 (el problema está en un servicio del que dependemos).
+
+**Errores de Descarga.** Siguen el mismo formato `{"code": …}`:
+
+| Código | HTTP | Cuándo |
+|---|---|---|
+| `unknown_quality_option` | 422 | La Opción de calidad elegida no existe para ese Vídeo. |
+| `download_not_found` | 404 | No hay ninguna Descarga con ese número (p. ej. tras reiniciar la app). |
+| `download_not_ready` | 409 | Se pide el archivo de una Descarga que aún no está Lista. |
+| `file_already_collected` | 410 | El archivo ya se entregó (y se borró del servidor). |
+
+**Varios hilos a la vez.** Cada Descarga se ejecuta en un hilo aparte mientras otros hilos atienden las peticiones del navegador. Para que no se pisen, cada Descarga solo cambia a través de sus propios métodos, protegidos con un *lock* (un candado que solo un hilo puede tener a la vez), y hacia fuera se entregan copias coherentes. Por eso, por ejemplo, si llegan dos peticiones del archivo a la vez, solo la primera lo recibe.
 
 **Idea clave:** la petición del paso 2 responde **al instante** ("Descarga creada"), aunque la Descarga tarde minutos. El trabajo real sigue en segundo plano y el navegador pregunta periódicamente cómo va (**polling**). Ver [ADR 0001](adr/0001-descarga-como-trabajo-en-memoria-con-polling.md) para el porqué.
 
@@ -245,7 +260,7 @@ flowchart TB
 | Sección | Tickets |
 |---|---|
 | 1 · Piezas: Frontend, API, Análisis, Fuente de vídeo | #2 (esqueleto) ✅, #3 (rechazos) ✅ |
-| 2 · Recorrido completo y Gestor de Descargas | #4 (primera Descarga MP3), #5 (MP4) |
+| 2 · Recorrido completo y Gestor de Descargas | #4 (primera Descarga MP3) ✅, #5 (MP4) |
 | 3 · Estados: cola, cancelar, reintentar | #6, #7, #8 |
 | 3 · Limpieza y caducidad | #9 |
 | 4 · Docker y modo uso | #10 |

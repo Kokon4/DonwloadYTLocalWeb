@@ -8,7 +8,14 @@ from dataclasses import dataclass
 from typing import Literal
 
 from app.links import PlaylistLinkError, UnsupportedLinkError, video_id_from_link
-from app.video_source import LiveVideoError, VideoSource, VideoSourceError, VideoUnavailableError
+from app.video_source import (
+    LiveVideoError,
+    MediaFormat,
+    Mp3Format,
+    VideoSource,
+    VideoSourceError,
+    VideoUnavailableError,
+)
 
 # Debe coincidir con AnalysisErrorCode en frontend/src/api.ts (y sus mensajes en App.vue).
 AnalysisErrorCode = Literal[
@@ -35,6 +42,8 @@ class QualityOption:
     id: str
     kind: Literal["mp4", "mp3"]
     label: str
+    # Qué archivo debe producir la Fuente de vídeo al elegir esta Opción.
+    media_format: MediaFormat
     default: bool = False
 
 
@@ -46,12 +55,26 @@ class Analysis:
     duration_seconds: int
     quality_options: list[QualityOption]
 
+    def find_option(self, option_id: str) -> QualityOption | None:
+        return next((o for o in self.quality_options if o.id == option_id), None)
+
 
 # El MP3 se genera al convertir, así que sus Opciones no dependen del Vídeo.
 # MP3 Alta es la Opción por defecto porque la app está pensada sobre todo para música.
 MP3_OPTIONS = [
-    QualityOption(id="mp3-192", kind="mp3", label="MP3 · Alta (192 kbps)", default=True),
-    QualityOption(id="mp3-128", kind="mp3", label="MP3 · Ligera (128 kbps)"),
+    QualityOption(
+        id="mp3-192",
+        kind="mp3",
+        label="MP3 · Alta (192 kbps)",
+        media_format=Mp3Format(bitrate_kbps=192),
+        default=True,
+    ),
+    QualityOption(
+        id="mp3-128",
+        kind="mp3",
+        label="MP3 · Ligera (128 kbps)",
+        media_format=Mp3Format(bitrate_kbps=128),
+    ),
 ]
 
 
@@ -62,6 +85,10 @@ def analyze_link(url: str, video_source: VideoSource) -> Analysis:
         raise AnalysisError("unsupported_link") from None
     except PlaylistLinkError:
         raise AnalysisError("playlist_not_supported") from None
+    return analyze_video(video_id, video_source)
+
+
+def analyze_video(video_id: str, video_source: VideoSource) -> Analysis:
     try:
         info = video_source.get_video_info(video_id)
     except LiveVideoError:

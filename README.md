@@ -6,7 +6,7 @@ Web local para descargar Vídeos de YouTube como MP3 o MP4, eligiendo entre las 
 - Vocabulario del proyecto: [GLOSSARY.md](GLOSSARY.md)
 - Decisiones de arquitectura: [docs/adr/](docs/adr/)
 
-> **Estado:** en desarrollo. De momento solo funciona el Análisis (pegar un enlace y ver el Vídeo y sus Opciones de calidad). El modo uso con Docker llegará en el issue #10.
+> **Estado:** en desarrollo. Ya funcionan el Análisis y las Descargas MP3 (con carátula y etiquetas). Faltan MP4, el límite de Descargas en paralelo, cancelar/reintentar, la limpieza automática y el modo uso con Docker (issues #5–#10).
 
 ## Desarrollo
 

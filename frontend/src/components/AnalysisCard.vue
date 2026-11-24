@@ -2,8 +2,9 @@
 import { computed } from 'vue'
 import type { Analysis } from '../api'
 
-const props = defineProps<{ analysis: Analysis }>()
+const props = defineProps<{ analysis: Analysis; creating: boolean }>()
 const selectedOptionId = defineModel<string>('selectedOptionId', { required: true })
+const emit = defineEmits<{ download: [] }>()
 
 const duration = computed(() => {
   const total = props.analysis.duration_seconds
@@ -27,6 +28,9 @@ const duration = computed(() => {
           {{ option.label }}
         </label>
       </fieldset>
+      <button type="button" class="download" :disabled="creating || !selectedOptionId" @click="emit('download')">
+        {{ creating ? 'Creando Descarga…' : 'Descargar' }}
+      </button>
     </div>
   </article>
 </template>
@@ -64,6 +68,9 @@ legend {
   font-weight: 600;
   margin-bottom: 0.25rem;
   color: var(--text-strong);
+}
+.download {
+  margin-top: 0.75rem;
 }
 .option {
   display: flex;
