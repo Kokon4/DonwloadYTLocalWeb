@@ -1,0 +1,16 @@
+[project]
+name = "download-yt-local-web-backend"
+version = "0.0.0"
+requires-python = "==3.12.*"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+
+[tool.mypy]
+strict = true
+packages = ["app", "tests"]
+
+[[tool.mypy.overrides]]
+module = ["yt_dlp", "yt_dlp.*"]
+ignore_missing_imports = true

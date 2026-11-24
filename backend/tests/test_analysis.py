@@ -1,0 +1,69 @@
+import pytest
+from fastapi.testclient import TestClient
+
+from app.main import create_app
+from app.video_source import VideoInfo
+
+
+class FakeVideoSource:
+    """Fuente de vídeo falsa: devuelve datos fijos para los Vídeos que conoce."""
+
+    def __init__(self, videos: dict[str, VideoInfo]) -> None:
+        self.videos = videos
+
+    def get_video_info(self, video_id: str) -> VideoInfo:
+        return self.videos[video_id]
+
+
+SONG = VideoInfo(
+    title="Artista - Canción (Official Video)",
+    thumbnail_url="https://i.ytimg.com/vi/dQw4w9WgXcQ/hqdefault.jpg",
+    duration_seconds=213,
+)
+
+
+def make_client(source: FakeVideoSource) -> TestClient:
+    return TestClient(create_app(video_source=source))
+
+
+def test_analysis_of_watch_link_returns_video_data_and_mp3_options() -> None:
+    source = FakeVideoSource({"dQw4w9WgXcQ": SONG})
+    client = make_client(source)
+
+    response = client.post(
+        "/api/analysis", json={"url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ"}
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "video_id": "dQw4w9WgXcQ",
+        "title": "Artista - Canción (Official Video)",
+        "thumbnail_url": "https://i.ytimg.com/vi/dQw4w9WgXcQ/hqdefault.jpg",
+        "duration_seconds": 213,
+        "quality_options": [
+            {"id": "mp3-192", "kind": "mp3", "label": "MP3 · Alta (192 kbps)", "default": True},
+            {"id": "mp3-128", "kind": "mp3", "label": "MP3 · Ligera (128 kbps)", "default": False},
+        ],
+    }
+
+
+
+@pytest.mark.parametrize(
+    "link",
+    [
+        "https://youtu.be/dQw4w9WgXcQ",
+        "https://youtu.be/dQw4w9WgXcQ?si=AbCdEf123",
+        "https://music.youtube.com/watch?v=dQw4w9WgXcQ&feature=share",
+        "https://www.youtube.com/watch?v=dQw4w9WgXcQ&list=PLx0sYbCqOb8TBPRdmBHs5Iftvv9TPboYG&index=3",
+        "https://m.youtube.com/watch?v=dQw4w9WgXcQ",
+        "youtube.com/watch?v=dQw4w9WgXcQ",
+    ],
+)
+def test_every_accepted_link_form_analyzes_the_same_video(link: str) -> None:
+    source = FakeVideoSource({"dQw4w9WgXcQ": SONG})
+    client = make_client(source)
+
+    response = client.post("/api/analysis", json={"url": link})
+
+    assert response.status_code == 200
+    assert response.json()["video_id"] == "dQw4w9WgXcQ"
