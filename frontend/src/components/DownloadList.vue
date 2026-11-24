@@ -1,8 +1,8 @@
 <script setup lang="ts">
-import type { Download, DownloadState } from '../api'
+import { TERMINAL_STATES, type Download, type DownloadState } from '../api'
 
-defineProps<{ downloads: Download[] }>()
-const emit = defineEmits<{ save: [download: Download] }>()
+defineProps<{ downloads: Download[]; cancelling: Set<number> }>()
+const emit = defineEmits<{ save: [download: Download]; cancel: [download: Download] }>()
 
 // Nombres de los estados tal como aparecen en GLOSSARY.md.
 const STATE_LABELS: Record<DownloadState, string> = {
@@ -11,6 +11,7 @@ const STATE_LABELS: Record<DownloadState, string> = {
   converting: 'Convirtiendo',
   ready: 'Lista',
   failed: 'Fallida',
+  cancelled: 'Cancelada',
 }
 </script>
 
@@ -41,6 +42,15 @@ const STATE_LABELS: Record<DownloadState, string> = {
           @click="emit('save', download)"
         >
           Guardar
+        </button>
+        <button
+          v-else-if="!TERMINAL_STATES.includes(download.state)"
+          type="button"
+          class="secondary"
+          :disabled="cancelling.has(download.id)"
+          @click="emit('cancel', download)"
+        >
+          {{ cancelling.has(download.id) ? 'Cancelando…' : 'Cancelar' }}
         </button>
       </li>
     </ul>
@@ -89,6 +99,14 @@ ul {
 .state.ready {
   color: var(--success);
   font-weight: 600;
+}
+.state.cancelled {
+  font-style: italic;
+}
+.secondary {
+  background: transparent;
+  color: var(--text-strong);
+  border: 1px solid var(--border);
 }
 .state.failed,
 .error {

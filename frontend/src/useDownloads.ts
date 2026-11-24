@@ -1,5 +1,5 @@
 import { onMounted, onUnmounted, ref } from 'vue'
-import { downloadFileUrl, listDownloads, TERMINAL_STATES, type Download } from './api'
+import { cancelDownload, downloadFileUrl, listDownloads, TERMINAL_STATES, type Download } from './api'
 
 const POLL_INTERVAL_MS = 1000
 
@@ -87,6 +87,27 @@ export function useDownloads() {
     schedule()
   }
 
+  /** Ids de las Descargas cuya cancelación se está enviando (para desactivar el botón). */
+  const cancelling = ref(new Set<number>())
+
+  /** Cancela una Descarga y muestra al momento su nuevo estado. Puede lanzar ApiError. */
+  async function cancel(download: Download) {
+    if (cancelling.value.has(download.id)) return
+    cancelling.value.add(download.id)
+    try {
+      replaceDownload(await cancelDownload(download))
+      schedule()
+    } finally {
+      cancelling.value.delete(download.id)
+    }
+  }
+
+  /** Sustituye una Descarga de la lista por su versión más reciente conocida. */
+  function replaceDownload(updated: Download) {
+    localChanges++
+    downloads.value = downloads.value.map((d) => (d.id === updated.id ? updated : d))
+  }
+
   /** Pide al navegador que guarde el archivo (como un enlace de descarga normal). */
   function save(download: Download) {
     const link = document.createElement('a')
@@ -95,11 +116,8 @@ export function useDownloads() {
     document.body.appendChild(link)
     link.click()
     link.remove()
-    // El servidor marca el archivo como recogido: se refresca para ocultar "Guardar".
-    localChanges++
-    downloads.value = downloads.value.map((d) =>
-      d.id === download.id ? { ...d, file_available: false } : d,
-    )
+    // El servidor marca el archivo como recogido: se oculta "Guardar".
+    replaceDownload({ ...download, file_available: false })
   }
 
   onMounted(() => void refresh())
@@ -108,5 +126,5 @@ export function useDownloads() {
     if (timer) clearTimeout(timer)
   })
 
-  return { downloads, track, save }
+  return { downloads, cancelling, track, save, cancel }
 }

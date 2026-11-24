@@ -5,7 +5,9 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import unquote
 
+import pytest
 from fastapi.testclient import TestClient
+from httpx import Response
 
 from tests.conftest import MakeClient
 from tests.fakes import (
@@ -276,3 +278,99 @@ def test_failed_download_also_frees_its_slot(make_client: MakeClient) -> None:
         current = states(client, downloads)
         assert current[:3].count("failed") == 1
         assert current[3:] == ["downloading", "pending"]
+
+
+def cancel(client: TestClient, download: dict[str, Any]) -> Response:
+    response: Response = client.post(f"/api/downloads/{download['id']}/cancel")
+    return response
+
+
+def test_cancelling_a_pending_download_means_it_never_starts(
+    make_client: MakeClient, tmp_path: Path
+) -> None:
+    with five_downloads_three_running(make_client) as (client, source, downloads):
+        cancelled = cancel(client, downloads[3])
+        assert (cancelled.status_code, cancelled.json()["state"]) == (200, "cancelled")
+
+        source.release()  # termina una de las tres en curso: le toca a la 5.ª, no a la 4.ª
+        wait_for(client, downloads[4]["id"], in_state("downloading"))
+        assert states(client, downloads)[3] == "cancelled"
+
+        # Cuando todas las demás terminan y se recogen, no queda ningún archivo: la
+        # cancelada no llegó a descargar nada.
+        source.release(4)
+        for other in downloads[:3] + downloads[4:]:
+            wait_for(client, other["id"], in_state("ready"))
+            client.get(f"/api/downloads/{other['id']}/file")
+        assert [p for p in tmp_path.rglob("*") if p.is_file()] == []
+
+
+@pytest.mark.parametrize("point", ["start", "downloading"])
+def test_cancelling_a_running_download_stops_it_and_deletes_partial_files(
+    make_client: MakeClient, tmp_path: Path, point: PausePoint
+) -> None:
+    source = paused_at(point)
+    client = make_client(source)
+    download = create_download(client)
+    wait_for(client, download["id"], lambda d: d["state"] != "pending")
+
+    response = cancel(client, download)
+
+    assert (response.status_code, response.json()["state"]) == (200, "cancelled")
+    wait_for(client, download["id"], lambda d: not any(tmp_path.rglob("*")))
+    assert client.get(f"/api/downloads/{download['id']}").json()["state"] == "cancelled"
+    file = client.get(f"/api/downloads/{download['id']}/file")
+    assert (file.status_code, file.json()) == (409, {"code": "download_not_ready"})
+
+
+def test_cancelling_while_converting_waits_for_the_step_and_then_discards_the_result(
+    make_client: MakeClient, tmp_path: Path
+) -> None:
+    source = paused_at("converting")
+    client = make_client(source)
+    download = create_download(client)
+    wait_for(client, download["id"], in_state("converting"))
+
+    response = cancel(client, download)
+
+    # Para el usuario está Cancelada al momento, aunque ffmpeg termine su paso.
+    assert (response.status_code, response.json()["state"]) == (200, "cancelled")
+    source.release()  # termina la conversión
+    wait_for(client, download["id"], lambda d: not any(tmp_path.rglob("*")))
+    assert client.get(f"/api/downloads/{download['id']}").json()["state"] == "cancelled"
+    file = client.get(f"/api/downloads/{download['id']}/file")
+    assert (file.status_code, file.json()) == (409, {"code": "download_not_ready"})
+
+
+def test_cancelling_a_running_download_frees_its_slot(make_client: MakeClient) -> None:
+    with five_downloads_three_running(make_client) as (client, _, downloads):
+        cancel(client, downloads[0])
+
+        wait_for(client, downloads[3]["id"], in_state("downloading"))
+        assert states(client, downloads)[4] == "pending"
+
+
+def test_finished_downloads_cannot_be_cancelled(make_client: MakeClient) -> None:
+    client = make_client()
+    ready = create_download(client)
+    wait_for(client, ready["id"], in_state("ready"))
+    failing = make_client(
+        FakeVideoSource({"dQw4w9WgXcQ": SONG}, fetch_error=RuntimeError("ffmpeg falló"))
+    )
+    failed = create_download(failing)
+    wait_for(failing, failed["id"], in_state("failed"))
+
+    for owner, download in ((client, ready), (failing, failed)):
+        response = cancel(owner, download)
+        assert (response.status_code, response.json()) == (409, {"code": "download_not_cancellable"})
+
+    cancelled = create_download(client)
+    cancel(client, cancelled)
+    again = cancel(client, cancelled)
+    assert (again.status_code, again.json()) == (409, {"code": "download_not_cancellable"})
+
+
+def test_cancelling_an_unknown_download_is_not_found(make_client: MakeClient) -> None:
+    response = make_client().post("/api/downloads/999/cancel")
+
+    assert (response.status_code, response.json()) == (404, {"code": "download_not_found"})

@@ -22,7 +22,7 @@ from pathlib import Path
 from typing import Literal
 
 from app.analysis import QualityOption, analyze_video
-from app.video_source import FetchPhase, VideoSource
+from app.video_source import FetchCancelledError, FetchPhase, VideoSource
 
 
 class DownloadState(StrEnum):
@@ -36,6 +36,7 @@ class DownloadState(StrEnum):
     CONVERTING = "converting"
     READY = "ready"
     FAILED = "failed"
+    CANCELLED = "cancelled"
 
 
 logger = logging.getLogger(__name__)
@@ -50,11 +51,15 @@ _ORDER = [
     DownloadState.CONVERTING,
     DownloadState.READY,
 ]
-_TERMINAL = {DownloadState.READY, DownloadState.FAILED}
+_TERMINAL = {DownloadState.READY, DownloadState.FAILED, DownloadState.CANCELLED}
 
 # Debe coincidir con los códigos de Descarga en frontend/src/api.ts.
 DownloadErrorCode = Literal[
-    "unknown_quality_option", "download_not_found", "download_not_ready", "file_already_collected"
+    "unknown_quality_option",
+    "download_not_found",
+    "download_not_ready",
+    "file_already_collected",
+    "download_not_cancellable",
 ]
 
 
@@ -111,15 +116,31 @@ class Download:
                 file_available=self._file_available,
             )
 
-    def start(self) -> None:
+    def start(self) -> bool:
         """Un hilo ha cogido la Descarga: deja de estar Pendiente.
 
         Todavía no se conoce el porcentaje (yt-dlp tarda un poco en consultar YouTube).
+        Devuelve False si se canceló mientras esperaba en la cola: no hay que ejecutarla.
         """
         with self._lock:
-            if self._state is DownloadState.PENDING:
-                self._state = DownloadState.DOWNLOADING
-                self._progress = None
+            if self._state is not DownloadState.PENDING:
+                return False
+            self._state = DownloadState.DOWNLOADING
+            self._progress = None
+            return True
+
+    def cancel(self) -> None:
+        """Pasa a Cancelada al momento; si está en curso, la obtención abortará en cuanto pueda."""
+        with self._lock:
+            if self._state in _TERMINAL:
+                raise DownloadError("download_not_cancellable")
+            self._state = DownloadState.CANCELLED
+            self._progress = None
+
+    def is_cancelled(self) -> bool:
+        """Lo consulta la Fuente de vídeo para saber si debe abortar."""
+        with self._lock:
+            return self._state is DownloadState.CANCELLED
 
     def advance(self, phase: FetchPhase, percent: float | None) -> None:
         """Aplica un aviso de progreso. Los avisos que harían retroceder se ignoran."""
@@ -130,15 +151,21 @@ class Download:
             self._state = target
             self._progress = percent
 
-    def mark_ready(self, file_path: Path) -> None:
+    def mark_ready(self, file_path: Path) -> bool:
+        """Devuelve False si se canceló justo antes de terminar: el archivo sobra."""
         with self._lock:
+            if self._state is DownloadState.CANCELLED:
+                return False
             self._state = DownloadState.READY
             self._progress = None
             self._file_path = file_path
             self._file_available = True
+            return True
 
     def mark_failed(self, message: str) -> None:
         with self._lock:
+            if self._state is DownloadState.CANCELLED:
+                return
             self._state = DownloadState.FAILED
             self._progress = None
             self._error_message = message
@@ -202,6 +229,11 @@ class DownloadManager:
         """Ruta del archivo para entregarlo; a partir de aquí ya no está disponible."""
         return self._find(download_id).claim_file()
 
+    def cancel(self, download_id: int) -> DownloadSnapshot:
+        download = self._find(download_id)
+        download.cancel()
+        return download.snapshot()
+
     def delete_file(self, download_id: int) -> None:
         """Borra del servidor el archivo ya entregado."""
         shutil.rmtree(self._find(download_id).work_dir, ignore_errors=True)
@@ -219,18 +251,26 @@ class DownloadManager:
             self._run(self._queue.get())
 
     def _run(self, download: Download) -> None:
+        if not download.start():
+            return  # se canceló mientras esperaba en la cola: no hay nada que hacer
         try:
-            download.start()
             download.work_dir.mkdir(parents=True, exist_ok=True)
             path = self._video_source.fetch(
                 download.video_id,
                 download.quality_option.media_format,
                 download.work_dir,
                 download.advance,
+                download.is_cancelled,
             )
-            download.mark_ready(path)
+        except FetchCancelledError:
+            pass  # ya está Cancelada; solo queda borrar lo descargado
         except Exception:
             # Se registra la causa real en el log del servidor; el usuario ve un mensaje genérico.
             logger.exception("La Descarga %s falló", download.id)
             download.mark_failed("No se pudo completar la Descarga.")
-            shutil.rmtree(download.work_dir, ignore_errors=True)
+        else:
+            if download.mark_ready(path):
+                return  # Lista: el archivo se queda hasta que el navegador lo recoja
+            # Se canceló justo cuando terminaba: el archivo sobra.
+        # Fallida o Cancelada: fuera los archivos parciales.
+        shutil.rmtree(download.work_dir, ignore_errors=True)

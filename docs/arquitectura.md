@@ -118,6 +118,7 @@ Los cuatro primeros responden 422 (el problema es lo que se pidió); `source_fai
 | `download_not_found` | 404 | No hay ninguna Descarga con ese número (p. ej. tras reiniciar la app). |
 | `download_not_ready` | 409 | Se pide el archivo de una Descarga que aún no está Lista. |
 | `file_already_collected` | 410 | El archivo ya se entregó (y se borró del servidor). |
+| `download_not_cancellable` | 409 | Se intenta cancelar una Descarga que ya terminó (Lista, Fallida o Cancelada). |
 
 **Varios hilos a la vez.** Cada Descarga se ejecuta en un hilo aparte mientras otros hilos atienden las peticiones del navegador. Para que no se pisen, cada Descarga solo cambia a través de sus propios métodos, protegidos con un *lock* (un candado que solo un hilo puede tener a la vez), y hacia fuera se entregan copias coherentes. Por eso, por ejemplo, si llegan dos peticiones del archivo a la vez, solo la primera lo recibe.
 
@@ -149,7 +150,12 @@ stateDiagram-v2
 
 - **Lista, Fallida y Cancelada** son estados **terminales**: ya no cambian.
 - **Reintentar** no "resucita" una Descarga Fallida o Cancelada: crea una **Descarga nueva** con el mismo Vídeo y la misma Opción de calidad. Así cada Descarga tiene una historia simple y lineal.
-- Cuando una Descarga llega a un estado terminal, libera su hueco y la Pendiente más antigua arranca.
+- Cuando una Descarga deja de trabajar (llega a Lista o Fallida, o aborta tras cancelarla), libera su hueco y la Pendiente más antigua arranca.
+- **Cancelar** (`POST /api/downloads/{id}/cancel`) la deja Cancelada al momento:
+  - si estaba **Pendiente**, cuando le toque el turno el hilo se la salta sin descargar nada;
+  - si estaba **en curso**, la Fuente de vídeo pregunta "¿me han cancelado?" (`is_cancelled()`) antes de empezar y en cada aviso de progreso de yt-dlp, y aborta;
+  - **la conversión de ffmpeg no se puede cortar a medias**: si se cancela mientras convierte, la Descarga aparece Cancelada al momento, pero su hilo termina ese paso, descarta el resultado y solo entonces libera el hueco. Convertir una canción tarda unos segundos (y unir un MP4 es casi instantáneo, porque no recomprime); solo en sesiones de horas se nota la espera;
+  - en todos los casos se borran los archivos parciales.
 - Por dentro, el Gestor de Descargas tiene un grupo fijo de 3 hilos trabajadores con una cola por orden de llegada. En cuanto un hilo coge una Descarga, esta pasa a Descargando, aunque todavía no se sepa el porcentaje: Pendiente significa solo "esperando turno".
 
 ---
@@ -262,6 +268,6 @@ flowchart TB
 |---|---|
 | 1 · Piezas: Frontend, API, Análisis, Fuente de vídeo | #2 (esqueleto) ✅, #3 (rechazos) ✅ |
 | 2 · Recorrido completo y Gestor de Descargas | #4 (primera Descarga MP3) ✅, #5 (MP4) ✅ |
-| 3 · Estados: cola, cancelar, reintentar | #6 ✅, #7, #8 |
+| 3 · Estados: cola, cancelar, reintentar | #6 ✅, #7 ✅, #8 |
 | 3 · Limpieza y caducidad | #9 |
 | 4 · Docker y modo uso | #10 |

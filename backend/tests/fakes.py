@@ -1,11 +1,19 @@
 """Piezas falsas compartidas por los tests."""
 
 import threading
-from collections.abc import Iterable
+import time
+from collections.abc import Callable, Iterable
 from pathlib import Path
 from typing import Literal
 
-from app.video_source import FetchPhase, MediaFormat, Mp3Format, ProgressCallback, VideoInfo
+from app.video_source import (
+    FetchCancelledError,
+    FetchPhase,
+    MediaFormat,
+    Mp3Format,
+    ProgressCallback,
+    VideoInfo,
+)
 
 # Puntos de la obtención en los que el test puede dejar "parada" a la Fuente falsa.
 PausePoint = Literal["start", "downloading", "converting"]
@@ -16,7 +24,11 @@ class FakeVideoSource:
 
     - Para cada Vídeo devuelve sus datos o lanza el error indicado.
     - ``fetch`` escribe un archivo pequeño en lugar de descargar nada:
-      empieza → Descargando al 40 % → Convirtiendo → archivo (.mp3 o .mp4) listo.
+      empieza (deja un archivo parcial) → Descargando al 40 % → Convirtiendo → archivo
+      (.mp3 o .mp4) listo.
+    - Si se cancela mientras está parada al empezar o descargando, aborta al momento,
+      como la real. Parada en Convirtiendo NO aborta hasta que se la libera (como ffmpeg,
+      que no se puede cortar a medias) y entonces descarta el resultado.
     - Con ``pause_at`` cada obtención se queda parada en ese punto hasta que el test
       llame a ``release()``, que deja continuar a una sola (o a ``count``).
     - ``late_events`` son avisos de progreso extra que se emiten tras Convirtiendo
@@ -39,9 +51,16 @@ class FakeVideoSource:
     def release(self, count: int = 1) -> None:
         self._releases.release(count)
 
-    def _checkpoint(self, point: PausePoint) -> None:
-        if self.pause_at == point:
-            assert self._releases.acquire(timeout=5), "el test no liberó la Fuente falsa"
+    def _checkpoint(
+        self, point: PausePoint, is_cancelled: Callable[[], bool], interruptible: bool = True
+    ) -> None:
+        if self.pause_at != point:
+            return
+        deadline = time.monotonic() + 5
+        while not self._releases.acquire(timeout=0.01):
+            if interruptible and is_cancelled():
+                raise FetchCancelledError()
+            assert time.monotonic() < deadline, "el test no liberó la Fuente falsa"
 
     def get_video_info(self, video_id: str) -> VideoInfo:
         result = self.videos[video_id]
@@ -55,16 +74,20 @@ class FakeVideoSource:
         media_format: MediaFormat,
         destination_dir: Path,
         on_progress: ProgressCallback,
+        is_cancelled: Callable[[], bool],
     ) -> Path:
-        self._checkpoint("start")
+        (destination_dir / "descarga.part").write_bytes(b"parcial")
+        self._checkpoint("start", is_cancelled)
         on_progress("downloading", 40.0)
-        self._checkpoint("downloading")
+        self._checkpoint("downloading", is_cancelled)
         if self.fetch_error is not None:
             raise self.fetch_error
         on_progress("converting", None)
         for phase, percent in self.late_events:
             on_progress(phase, percent)
-        self._checkpoint("converting")
+        self._checkpoint("converting", is_cancelled, interruptible=False)
+        if is_cancelled():
+            raise FetchCancelledError()
         info = self.get_video_info(video_id)
         if isinstance(media_format, Mp3Format):
             path = destination_dir / f"{info.title}.mp3"
@@ -72,6 +95,7 @@ class FakeVideoSource:
         else:
             path = destination_dir / f"{info.title}.mp4"
             path.write_bytes(fake_mp4_bytes(video_id, media_format.resolution))
+        (destination_dir / "descarga.part").unlink()
         return path
 
 

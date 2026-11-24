@@ -77,6 +77,7 @@ DOWNLOAD_ERROR_STATUS: dict[DownloadErrorCode, int] = {
     "download_not_found": 404,
     "download_not_ready": 409,
     "file_already_collected": 410,
+    "download_not_cancellable": 409,
 }
 
 
@@ -110,6 +111,10 @@ def create_app(video_source: VideoSource, temp_dir: Path) -> FastAPI:
     @app.get("/api/downloads/{download_id}")
     def get_download(download_id: int) -> DownloadResponse:
         return DownloadResponse.of(downloads.get(download_id))
+
+    @app.post("/api/downloads/{download_id}/cancel")
+    def cancel_download(download_id: int) -> DownloadResponse:
+        return DownloadResponse.of(downloads.cancel(download_id))
 
     @app.get("/api/downloads/{download_id}/file")
     def download_file(download_id: int, background: BackgroundTasks) -> FileResponse:

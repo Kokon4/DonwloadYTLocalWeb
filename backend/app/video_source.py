@@ -56,6 +56,10 @@ class VideoUnavailableError(Exception):
     bloqueado en la región o que requiere iniciar sesión."""
 
 
+class FetchCancelledError(Exception):
+    """La obtención se abortó porque se activó la señal de cancelación."""
+
+
 class VideoSourceError(Exception):
     """Fallo inesperado al consultar YouTube que no dice nada del Vídeo: sin conexión,
     YouTube bloqueando peticiones automáticas, o yt-dlp desactualizado (ver ADR 0003)."""
@@ -73,11 +77,14 @@ class VideoSource(Protocol):
         media_format: MediaFormat,
         destination_dir: Path,
         on_progress: ProgressCallback,
+        is_cancelled: Callable[[], bool],
     ) -> Path:
         """Obtiene el archivo final del Vídeo en ``destination_dir`` y devuelve su ruta.
 
         Informa del avance con ``on_progress``. El nombre del archivo es el título del
-        Vídeo, saneado para el sistema de archivos.
+        Vídeo, saneado para el sistema de archivos. Si ``is_cancelled()`` pasa a ser
+        cierto, aborta en cuanto puede con FetchCancelledError (puede dejar archivos
+        parciales). Un paso de ffmpeg en marcha no se corta: se aborta al terminar.
         """
         ...
 
@@ -145,6 +152,7 @@ class YtDlpVideoSource:
         media_format: MediaFormat,
         destination_dir: Path,
         on_progress: ProgressCallback,
+        is_cancelled: Callable[[], bool],
     ) -> Path:
         import yt_dlp
 
@@ -153,6 +161,9 @@ class YtDlpVideoSource:
 
         def progress_hook(event: dict[str, Any]) -> None:
             nonlocal finished_parts
+            # yt-dlp llama a este aviso muy a menudo: es el punto para abortar la descarga.
+            if is_cancelled():
+                raise FetchCancelledError()
             if event["status"] == "downloading":
                 total = event.get("total_bytes") or event.get("total_bytes_estimate")
                 done = event.get("downloaded_bytes")
@@ -166,6 +177,9 @@ class YtDlpVideoSource:
                 finished_parts += 1
 
         def postprocessor_hook(event: dict[str, Any]) -> None:
+            # ffmpeg no se puede interrumpir a medias: se aborta entre un paso y el siguiente.
+            if is_cancelled():
+                raise FetchCancelledError()
             # La conversión de la miniatura corre antes de descargar: no es "Convirtiendo".
             if event["status"] == "started" and finished_parts >= plan.parts:
                 on_progress("converting", None)
@@ -193,13 +207,24 @@ class YtDlpVideoSource:
             ],
             **plan.extra_options,
         }
+        # Antes de empezar: consultar YouTube ya tarda un par de segundos.
+        if is_cancelled():
+            raise FetchCancelledError()
         try:
             with yt_dlp.YoutubeDL(options) as ydl:
                 raw_info: dict[str, Any] = ydl.extract_info(
                     f"https://www.youtube.com/watch?v={video_id}", download=True
                 )
-        except yt_dlp.utils.DownloadError as error:
-            raise VideoSourceError(str(error)) from error
+        except Exception as error:
+            # yt-dlp puede envolver la excepción lanzada desde los avisos en la suya propia.
+            if is_cancelled():
+                raise FetchCancelledError() from error
+            if isinstance(error, yt_dlp.utils.DownloadError):
+                raise VideoSourceError(str(error)) from error
+            raise
+        # Cancelada durante el último paso de ffmpeg: el resultado sobra.
+        if is_cancelled():
+            raise FetchCancelledError()
 
         # Ruta del archivo final (ya convertido o unido).
         return Path(raw_info["requested_downloads"][0]["filepath"])

@@ -1,6 +1,13 @@
 <script setup lang="ts">
 import { ref } from 'vue'
-import { analyzeLink, ApiError, createDownload, type Analysis, type ApiErrorCode } from './api'
+import {
+  analyzeLink,
+  ApiError,
+  createDownload,
+  type Analysis,
+  type ApiErrorCode,
+  type Download,
+} from './api'
 import AnalysisCard from './components/AnalysisCard.vue'
 import DownloadList from './components/DownloadList.vue'
 import LinkForm from './components/LinkForm.vue'
@@ -20,6 +27,7 @@ const ERROR_MESSAGES: Record<ApiErrorCode, string> = {
   download_not_found: 'Esa Descarga ya no existe (puede que se haya reiniciado la app).',
   download_not_ready: 'La Descarga todavía no está Lista.',
   file_already_collected: 'El archivo de esa Descarga ya se guardó.',
+  download_not_cancellable: 'Esa Descarga ya había terminado y no se puede cancelar.',
 }
 const UNEXPECTED_ERROR = 'No se pudo completar la operación. Comprueba que el backend está en marcha e inténtalo de nuevo.'
 
@@ -28,11 +36,20 @@ const selectedOptionId = ref('')
 const analyzing = ref(false)
 const error = ref<string | null>(null)
 const creating = ref(false)
-const { downloads, track, save } = useDownloads()
+const { downloads, cancelling, track, save, cancel } = useDownloads()
 
 function messageFor(e: unknown): string {
   const code = e instanceof ApiError ? e.code : null
   return code ? ERROR_MESSAGES[code] : UNEXPECTED_ERROR
+}
+
+async function onCancel(download: Download) {
+  error.value = null
+  try {
+    await cancel(download)
+  } catch (e) {
+    error.value = messageFor(e)
+  }
 }
 
 async function onDownload() {
@@ -79,7 +96,12 @@ async function onSubmit(url: string) {
       :creating="creating"
       @download="onDownload"
     />
-    <DownloadList :downloads="downloads" @save="save" />
+    <DownloadList
+      :downloads="downloads"
+      :cancelling="cancelling"
+      @save="save"
+      @cancel="onCancel"
+    />
   </main>
 </template>
 
