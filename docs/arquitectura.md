@@ -60,9 +60,15 @@ sequenceDiagram
     F->>Y: ¿qué es este vídeo?
     Y-->>F: título, miniatura, duración, formatos
     F-->>AN: datos del Vídeo
-    AN-->>A: Vídeo + Opciones de calidad
-    A-->>V: datos + Opciones de calidad
-    V-->>U: Muestra el Vídeo y las Opciones
+    alt Enlace y Vídeo válidos
+        AN-->>A: Vídeo + Opciones de calidad
+        A-->>V: 200 datos + Opciones de calidad
+        V-->>U: Muestra el Vídeo y las Opciones
+    else Enlace o Vídeo rechazado
+        AN-->>A: error con código
+        A-->>V: 422 o 502 con el código
+        V-->>U: Mensaje explicando el motivo
+    end
 
     Note over U,Y: Paso 2 · Descarga (en segundo plano)
     U->>V: Elige una Opción de calidad
@@ -87,6 +93,18 @@ sequenceDiagram
     V-->>U: Se guarda en tu carpeta de descargas
     Note over G: el temporal se borra
 ```
+
+**Rechazos del Análisis.** Cada motivo tiene un código que la web traduce a un mensaje en español:
+
+| Código | Quién lo detecta | Cuándo |
+|---|---|---|
+| `unsupported_link` | Análisis | El enlace no es de un Vídeo de YouTube. |
+| `playlist_not_supported` | Análisis | El enlace es de una Lista de reproducción sin Vídeo concreto. |
+| `live_not_supported` | Fuente de vídeo | Directo en curso o estreno que aún no ha empezado. |
+| `video_unavailable` | Fuente de vídeo | Privado, eliminado, con restricción de edad, bloqueado en tu país… |
+| `source_failed` (HTTP 502) | Fuente de vídeo | Falla YouTube o yt-dlp, no el Vídeo: sin conexión o yt-dlp desactualizado. |
+
+Los cuatro primeros responden 422 (el problema es lo que se pidió); `source_failed` responde 502 (el problema está en un servicio del que dependemos).
 
 **Idea clave:** la petición del paso 2 responde **al instante** ("Descarga creada"), aunque la Descarga tarde minutos. El trabajo real sigue en segundo plano y el navegador pregunta periódicamente cómo va (**polling**). Ver [ADR 0001](adr/0001-descarga-como-trabajo-en-memoria-con-polling.md) para el porqué.
 
@@ -226,7 +244,7 @@ flowchart TB
 
 | Sección | Tickets |
 |---|---|
-| 1 · Piezas: Frontend, API, Análisis, Fuente de vídeo | #2 (esqueleto) ✅, #3 (rechazos) |
+| 1 · Piezas: Frontend, API, Análisis, Fuente de vídeo | #2 (esqueleto) ✅, #3 (rechazos) ✅ |
 | 2 · Recorrido completo y Gestor de Descargas | #4 (primera Descarga MP3), #5 (MP4) |
 | 3 · Estados: cola, cancelar, reintentar | #6, #7, #8 |
 | 3 · Limpieza y caducidad | #9 |

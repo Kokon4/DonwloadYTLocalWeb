@@ -8,6 +8,10 @@ Aplicación web local para descargar vídeos individuales de YouTube como vídeo
 Un único vídeo de YouTube identificado por su enlace. Las listas de reproducción no son un Vídeo y quedan fuera del alcance.
 _Avoid_: Playlist, lista, URL (cuando se habla del contenido y no del enlace)
 
+**Lista de reproducción**:
+Una colección de Vídeos de YouTube. Fuera del alcance: un enlace que solo apunta a una Lista de reproducción se rechaza; si el enlace incluye un Vídeo concreto, se usa solo ese Vídeo.
+_Avoid_: Lista (a secas), mix
+
 **Análisis**:
 La consulta previa de un Vídeo para conocer su título, miniatura, duración y las calidades que realmente ofrece.
 _Avoid_: Preview, inspección, metadata

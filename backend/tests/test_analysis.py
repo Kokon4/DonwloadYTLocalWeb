@@ -2,24 +2,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.main import create_app
-from app.video_source import VideoInfo
-
-
-class FakeVideoSource:
-    """Fuente de vídeo falsa: devuelve datos fijos para los Vídeos que conoce."""
-
-    def __init__(self, videos: dict[str, VideoInfo]) -> None:
-        self.videos = videos
-
-    def get_video_info(self, video_id: str) -> VideoInfo:
-        return self.videos[video_id]
-
-
-SONG = VideoInfo(
-    title="Artista - Canción (Official Video)",
-    thumbnail_url="https://i.ytimg.com/vi/dQw4w9WgXcQ/hqdefault.jpg",
-    duration_seconds=213,
-)
+from tests.fakes import SONG, FakeVideoSource
 
 
 def make_client(source: FakeVideoSource) -> TestClient:

@@ -7,8 +7,25 @@ a la Fuente de vídeo y decide las Opciones de calidad.
 from dataclasses import dataclass
 from typing import Literal
 
-from app.links import video_id_from_link
-from app.video_source import VideoSource
+from app.links import PlaylistLinkError, UnsupportedLinkError, video_id_from_link
+from app.video_source import LiveVideoError, VideoSource, VideoSourceError, VideoUnavailableError
+
+# Debe coincidir con AnalysisErrorCode en frontend/src/api.ts (y sus mensajes en App.vue).
+AnalysisErrorCode = Literal[
+    "unsupported_link",
+    "playlist_not_supported",
+    "live_not_supported",
+    "video_unavailable",
+    "source_failed",
+]
+
+
+class AnalysisError(Exception):
+    """El Análisis no puede continuar. El código lo usa la interfaz para elegir el mensaje."""
+
+    def __init__(self, code: AnalysisErrorCode) -> None:
+        super().__init__(code)
+        self.code = code
 
 
 @dataclass(frozen=True)
@@ -39,8 +56,20 @@ MP3_OPTIONS = [
 
 
 def analyze_link(url: str, video_source: VideoSource) -> Analysis:
-    video_id = video_id_from_link(url)
-    info = video_source.get_video_info(video_id)
+    try:
+        video_id = video_id_from_link(url)
+    except UnsupportedLinkError:
+        raise AnalysisError("unsupported_link") from None
+    except PlaylistLinkError:
+        raise AnalysisError("playlist_not_supported") from None
+    try:
+        info = video_source.get_video_info(video_id)
+    except LiveVideoError:
+        raise AnalysisError("live_not_supported") from None
+    except VideoUnavailableError:
+        raise AnalysisError("video_unavailable") from None
+    except VideoSourceError:
+        raise AnalysisError("source_failed") from None
     return Analysis(
         video_id=video_id,
         title=info.title,

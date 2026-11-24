@@ -3,10 +3,11 @@
 from dataclasses import asdict
 from typing import Literal
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
-from app.analysis import analyze_link
+from app.analysis import AnalysisError, analyze_link
 from app.video_source import VideoSource
 
 
@@ -31,6 +32,12 @@ class AnalysisResponse(BaseModel):
 
 def create_app(video_source: VideoSource) -> FastAPI:
     app = FastAPI(title="DownloadYTLocalWeb")
+
+    @app.exception_handler(AnalysisError)
+    def analysis_error(_: Request, error: AnalysisError) -> JSONResponse:
+        # 422: el enlace no se puede analizar. 502: falló YouTube/yt-dlp, no el enlace.
+        status = 502 if error.code == "source_failed" else 422
+        return JSONResponse(status_code=status, content={"code": error.code})
 
     @app.post("/api/analysis")
     def analyze(request: AnalysisRequest) -> AnalysisResponse:
