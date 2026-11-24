@@ -9,7 +9,8 @@ pythonpath = ["."]
 
 [tool.mypy]
 strict = true
-packages = ["app", "tests"]
+files = ["app", "tests", "scripts/update_yt_dlp.py"]
+explicit_package_bases = true
 
 [[tool.mypy.overrides]]
 module = ["yt_dlp", "yt_dlp.*"]

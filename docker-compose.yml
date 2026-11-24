@@ -1,0 +1,23 @@
+# Usar la app:            docker compose up --build
+# Actualizar yt-dlp:      docker compose run --rm update-yt-dlp && docker compose up --build
+# (ver README.md y ADR 0003)
+services:
+  app:
+    build: .
+    image: downloadytlocalweb
+    ports:
+      # Solo accesible desde este PC (127.0.0.1), no desde otros dispositivos de la red.
+      - "127.0.0.1:8000:8000"
+
+  # Herramienta: cambia la versión fijada de yt-dlp a la última publicada.
+  # No arranca con "docker compose up" (perfil "tools"), solo con "docker compose run".
+  update-yt-dlp:
+    # La misma Python que la app (etapa "python-base" del Dockerfile).
+    build:
+      context: .
+      target: python-base
+    profiles: ["tools"]
+    volumes:
+      - ./backend:/backend
+    working_dir: /backend
+    command: ["python", "scripts/update_yt_dlp.py"]

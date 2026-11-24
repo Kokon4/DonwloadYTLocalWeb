@@ -6,7 +6,33 @@ Web local para descargar Vídeos de YouTube como MP3 o MP4, eligiendo entre las 
 - Vocabulario del proyecto: [GLOSSARY.md](GLOSSARY.md)
 - Decisiones de arquitectura: [docs/adr/](docs/adr/)
 
-> **Estado:** en desarrollo. Ya funcionan el Análisis y las Descargas MP3 y MP4 (con carátula y etiquetas). Como máximo 3 Descargas avanzan a la vez y se pueden cancelar o reintentar. Los temporales se limpian solos. Falta el modo uso con Docker (issue #10).
+Funciona: Análisis, Descargas MP3 y MP4 (con carátula y etiquetas), máximo 3 Descargas a la vez, cancelar, reintentar y limpieza automática de temporales.
+
+## Usar la app (con Docker)
+
+Solo necesitas [Docker](https://docs.docker.com/get-docker/) con Docker Compose. No hace falta instalar Python, Node ni ffmpeg: van dentro de la imagen.
+
+```bash
+git clone https://github.com/Kokon4/DonwloadYTLocalWeb.git
+cd DonwloadYTLocalWeb
+docker compose up --build
+```
+
+Abre **http://localhost:8000**. Para pararla, `Ctrl+C` (o `docker compose down` si la arrancaste con `-d`, en segundo plano).
+
+- Solo es accesible desde tu propio PC (`127.0.0.1`), no desde otros dispositivos de la red.
+- La primera vez tarda unos minutos en construir la imagen; las siguientes arranca en segundos.
+- Los archivos se guardan en la carpeta de descargas de tu navegador.
+
+### Cuando YouTube deje de funcionar: actualizar yt-dlp
+
+YouTube cambia a menudo y, cada cierto tiempo, la versión de yt-dlp deja de funcionar (Descargas Fallidas con "probablemente hay que actualizar yt-dlp"). Se arregla con:
+
+```bash
+docker compose run --rm update-yt-dlp && docker compose up --build
+```
+
+Cambia la versión fijada en `backend/requirements.txt` a la última y reconstruye la imagen. Ver [ADR 0003](docs/adr/0003-yt-dlp-fijado-con-actualizacion-en-un-paso.md).
 
 ## Desarrollo
 

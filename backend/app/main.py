@@ -7,6 +7,7 @@ from typing import Literal
 
 from fastapi import BackgroundTasks, FastAPI, Request
 from fastapi.responses import FileResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from app.analysis import AnalysisError, analyze_link
@@ -89,8 +90,16 @@ DOWNLOAD_ERROR_STATUS: dict[DownloadErrorCode, int] = {
 
 
 def create_app(
-    video_source: VideoSource, temp_dir: Path, clock: Clock = lambda: datetime.now(UTC)
+    video_source: VideoSource,
+    temp_dir: Path,
+    clock: Clock = lambda: datetime.now(UTC),
+    frontend_dir: Path | None = None,
 ) -> FastAPI:
+    """Crea la app.
+
+    ``frontend_dir`` es la web compilada (``npm run build``). En modo uso se sirve desde
+    aquí mismo, en el mismo origen que la API; en desarrollo es None y la sirve Vite.
+    """
     app = FastAPI(title="DownloadYTLocalWeb")
     downloads = DownloadManager(video_source, temp_dir, clock)
 
@@ -135,5 +144,9 @@ def create_app(
         # Se borra del servidor cuando la respuesta termina de enviarse.
         background.add_task(downloads.delete_file, download_id)
         return FileResponse(path, filename=path.name, content_disposition_type="attachment")
+
+    if frontend_dir is not None:
+        # Se monta al final: las rutas /api/... tienen prioridad sobre los archivos.
+        app.mount("/", StaticFiles(directory=frontend_dir, html=True), name="frontend")
 
     return app

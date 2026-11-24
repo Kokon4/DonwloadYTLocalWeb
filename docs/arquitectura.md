@@ -209,7 +209,16 @@ flowchart LR
     DIST -->|"se copia"| DIST2
 ```
 
-La imagen final no lleva Node: solo hacía falta para compilar. Así es más pequeña.
+La imagen final no lleva Node: solo hacía falta para compilar. Así es más pequeña. Además se ejecuta con un usuario sin privilegios (no root), y `docker-compose.yml` publica el puerto solo en `127.0.0.1`.
+
+**Configuración por variables de entorno** (las fija la imagen Docker; en desarrollo no hacen falta):
+
+| Variable | Para qué | Si no se indica |
+|---|---|---|
+| `DOWNLOADYT_FRONTEND_DIR` | Carpeta con la web compilada que sirve FastAPI (`create_app(..., frontend_dir=...)`). | Solo se sirve la API; la web la sirve Vite. |
+| `DOWNLOADYT_TEMP_DIR` | Carpeta temporal de las Descargas. | `downloadytlocalweb` dentro del temporal del sistema. |
+
+**Actualizar yt-dlp** usa un segundo servicio de Compose (`update-yt-dlp`, que no arranca con `docker compose up`): un contenedor de Python que cambia la versión fijada en `backend/requirements.txt` a la última de PyPI. Después se reconstruye la imagen. Así funciona igual en Linux, Windows y Mac, sin Python instalado en el PC. Usa la misma imagen de Python que la app (la etapa `python-base` del Dockerfile), así que la versión de Python está en un solo sitio.
 
 ---
 
@@ -277,4 +286,4 @@ flowchart TB
 | 2 · Recorrido completo y Gestor de Descargas | #4 (primera Descarga MP3) ✅, #5 (MP4) ✅ |
 | 3 · Estados: cola, cancelar, reintentar | #6 ✅, #7 ✅, #8 ✅ |
 | 3 · Limpieza y caducidad | #9 ✅ |
-| 4 · Docker y modo uso | #10 |
+| 4 · Docker y modo uso | #10 ✅ |
