@@ -1,54 +1,34 @@
 <script setup lang="ts">
 import { ref } from 'vue'
-import {
-  analyzeLink,
-  ApiError,
-  createDownload,
-  type Analysis,
-  type ApiErrorCode,
-  type Download,
-} from './api'
+import { analyzeLink, ApiError, createDownload, type Analysis, type Download } from './api'
 import AnalysisCard from './components/AnalysisCard.vue'
 import DownloadList from './components/DownloadList.vue'
 import LinkForm from './components/LinkForm.vue'
+import { messageFor } from './messages'
 import { useDownloads } from './useDownloads'
 
-const ERROR_MESSAGES: Record<ApiErrorCode, string> = {
-  unsupported_link: 'Ese enlace no es de un Vídeo de YouTube. Copia el enlace desde la barra del navegador o desde el botón "Compartir".',
-  playlist_not_supported:
-    'Ese enlace es de una lista de reproducción. Las listas no están soportadas: abre un Vídeo de la lista y copia su enlace.',
-  live_not_supported:
-    'Ese Vídeo es un directo en curso o un estreno que aún no ha empezado. Se podrá descargar cuando termine.',
-  video_unavailable:
-    'No se puede acceder a ese Vídeo: puede ser privado, estar eliminado, tener restricción de edad o no estar disponible en tu país.',
-  source_failed:
-    'Algo falló al consultar YouTube. Si pasa con todos los Vídeos, probablemente hay que actualizar yt-dlp.',
-  unknown_quality_option: 'Esa Opción de calidad ya no está disponible para este Vídeo. Vuelve a analizar el enlace.',
-  download_not_found: 'Esa Descarga ya no existe (puede que se haya reiniciado la app).',
-  download_not_ready: 'La Descarga todavía no está Lista.',
-  file_already_collected: 'El archivo de esa Descarga ya se guardó.',
-  download_not_cancellable: 'Esa Descarga ya había terminado y no se puede cancelar.',
-}
-const UNEXPECTED_ERROR = 'No se pudo completar la operación. Comprueba que el backend está en marcha e inténtalo de nuevo.'
 
 const analysis = ref<Analysis | null>(null)
 const selectedOptionId = ref('')
 const analyzing = ref(false)
 const error = ref<string | null>(null)
 const creating = ref(false)
-const { downloads, cancelling, track, save, cancel } = useDownloads()
+const { downloads, busy, track, save, cancel, retry } = useDownloads()
 
-function messageFor(e: unknown): string {
-  const code = e instanceof ApiError ? e.code : null
-  return code ? ERROR_MESSAGES[code] : UNEXPECTED_ERROR
+function errorMessage(e: unknown): string {
+  return messageFor(e instanceof ApiError ? e.code : null)
 }
 
-async function onCancel(download: Download) {
+/** Ejecuta una acción (Cancelar, Reintentar) sobre una Descarga y muestra el error si falla. */
+async function runDownloadAction(
+  action: (download: Download) => Promise<void>,
+  download: Download,
+) {
   error.value = null
   try {
-    await cancel(download)
+    await action(download)
   } catch (e) {
-    error.value = messageFor(e)
+    error.value = errorMessage(e)
   }
 }
 
@@ -59,7 +39,7 @@ async function onDownload() {
   try {
     track(await createDownload(analysis.value.video_id, selectedOptionId.value))
   } catch (e) {
-    error.value = messageFor(e)
+    error.value = errorMessage(e)
   } finally {
     creating.value = false
   }
@@ -76,7 +56,7 @@ async function onSubmit(url: string) {
     const preselected = result.quality_options.find((o) => o.default) ?? result.quality_options[0]
     selectedOptionId.value = preselected?.id ?? ''
   } catch (e) {
-    error.value = messageFor(e)
+    error.value = errorMessage(e)
   } finally {
     analyzing.value = false
   }
@@ -98,9 +78,10 @@ async function onSubmit(url: string) {
     />
     <DownloadList
       :downloads="downloads"
-      :cancelling="cancelling"
+      :busy="busy"
       @save="save"
-      @cancel="onCancel"
+      @cancel="runDownloadAction(cancel, $event)"
+      @retry="runDownloadAction(retry, $event)"
     />
   </main>
 </template>

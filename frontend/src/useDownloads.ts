@@ -1,5 +1,12 @@
 import { onMounted, onUnmounted, ref } from 'vue'
-import { cancelDownload, downloadFileUrl, listDownloads, TERMINAL_STATES, type Download } from './api'
+import {
+  cancelDownload,
+  downloadFileUrl,
+  listDownloads,
+  retryDownload,
+  TERMINAL_STATES,
+  type Download,
+} from './api'
 
 const POLL_INTERVAL_MS = 1000
 
@@ -87,19 +94,31 @@ export function useDownloads() {
     schedule()
   }
 
-  /** Ids de las Descargas cuya cancelación se está enviando (para desactivar el botón). */
-  const cancelling = ref(new Set<number>())
+  /** Ids de las Descargas con una acción (Cancelar, Reintentar) en vuelo: sus botones se desactivan. */
+  const busy = ref(new Set<number>())
+
+  /** Ejecuta la acción si no hay otra en vuelo para esa Descarga (evita dobles clics). */
+  async function exclusive(download: Download, action: () => Promise<void>) {
+    if (busy.value.has(download.id)) return
+    busy.value.add(download.id)
+    try {
+      await action()
+    } finally {
+      busy.value.delete(download.id)
+    }
+  }
 
   /** Cancela una Descarga y muestra al momento su nuevo estado. Puede lanzar ApiError. */
   async function cancel(download: Download) {
-    if (cancelling.value.has(download.id)) return
-    cancelling.value.add(download.id)
-    try {
+    await exclusive(download, async () => {
       replaceDownload(await cancelDownload(download))
       schedule()
-    } finally {
-      cancelling.value.delete(download.id)
-    }
+    })
+  }
+
+  /** Reintenta una Descarga Fallida o Cancelada: aparece una Descarga nueva. Puede lanzar ApiError. */
+  async function retry(download: Download) {
+    await exclusive(download, async () => track(await retryDownload(download)))
   }
 
   /** Sustituye una Descarga de la lista por su versión más reciente conocida. */
@@ -126,5 +145,5 @@ export function useDownloads() {
     if (timer) clearTimeout(timer)
   })
 
-  return { downloads, cancelling, track, save, cancel }
+  return { downloads, busy, track, save, cancel, retry }
 }

@@ -127,11 +127,7 @@ class YtDlpVideoSource:
                     f"https://www.youtube.com/watch?v={video_id}", download=False
                 )
         except yt_dlp.utils.DownloadError as error:
-            # yt-dlp usa el mismo error para todo: lo distinguimos por el mensaje.
-            message = str(error).lower()
-            if any(marker in message for marker in ACCESS_ERROR_MARKERS):
-                raise VideoUnavailableError(str(error)) from error
-            raise VideoSourceError(str(error)) from error
+            raise _classify(error) from error
 
         if raw_info.get("is_live") or raw_info.get("live_status") in LIVE_STATUSES:
             raise LiveVideoError(video_id)
@@ -220,7 +216,7 @@ class YtDlpVideoSource:
             if is_cancelled():
                 raise FetchCancelledError() from error
             if isinstance(error, yt_dlp.utils.DownloadError):
-                raise VideoSourceError(str(error)) from error
+                raise _classify(error) from error
             raise
         # Cancelada durante el último paso de ffmpeg: el resultado sobra.
         if is_cancelled():
@@ -228,6 +224,14 @@ class YtDlpVideoSource:
 
         # Ruta del archivo final (ya convertido o unido).
         return Path(raw_info["requested_downloads"][0]["filepath"])
+
+
+def _classify(error: Exception) -> VideoUnavailableError | VideoSourceError:
+    """yt-dlp usa el mismo error para todo: lo distinguimos por el mensaje."""
+    message = str(error).lower()
+    if any(marker in message for marker in ACCESS_ERROR_MARKERS):
+        return VideoUnavailableError(str(error))
+    return VideoSourceError(str(error))
 
 
 @dataclass(frozen=True)

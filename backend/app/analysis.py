@@ -108,15 +108,30 @@ def analyze_link(url: str, video_source: VideoSource) -> Analysis:
     return analyze_video(video_id, video_source)
 
 
+# Códigos para los errores que puede dar la Fuente de vídeo; los usan tanto el Análisis
+# como el Gestor de Descargas (para explicar por qué falló una Descarga).
+SourceErrorCode = Literal["live_not_supported", "video_unavailable", "source_failed"]
+
+
+def source_error_code(error: Exception) -> SourceErrorCode | None:
+    """Código del error de la Fuente de vídeo, o None si no es un error de la Fuente."""
+    if isinstance(error, LiveVideoError):
+        return "live_not_supported"
+    if isinstance(error, VideoUnavailableError):
+        return "video_unavailable"
+    if isinstance(error, VideoSourceError):
+        return "source_failed"
+    return None
+
+
 def analyze_video(video_id: str, video_source: VideoSource) -> Analysis:
     try:
         info = video_source.get_video_info(video_id)
-    except LiveVideoError:
-        raise AnalysisError("live_not_supported") from None
-    except VideoUnavailableError:
-        raise AnalysisError("video_unavailable") from None
-    except VideoSourceError:
-        raise AnalysisError("source_failed") from None
+    except Exception as error:
+        code = source_error_code(error)
+        if code is None:
+            raise
+        raise AnalysisError(code) from None
     return Analysis(
         video_id=video_id,
         title=info.title,

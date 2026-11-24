@@ -21,7 +21,7 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Literal
 
-from app.analysis import QualityOption, analyze_video
+from app.analysis import QualityOption, SourceErrorCode, analyze_video, source_error_code
 from app.video_source import FetchCancelledError, FetchPhase, VideoSource
 
 
@@ -60,7 +60,16 @@ DownloadErrorCode = Literal[
     "download_not_ready",
     "file_already_collected",
     "download_not_cancellable",
+    "download_not_retryable",
 ]
+
+# Estados desde los que se puede Reintentar (crea una Descarga nueva).
+_RETRYABLE = {DownloadState.FAILED, DownloadState.CANCELLED}
+
+
+# Por qué falló una Descarga. La web traduce cada código a un mensaje (los de la Fuente
+# de vídeo son los mismos que en el Análisis). Debe coincidir con frontend/src/api.ts.
+FailureCode = SourceErrorCode | Literal["unexpected_error"]
 
 
 class DownloadError(Exception):
@@ -80,7 +89,7 @@ class DownloadSnapshot:
     created_at: datetime
     state: DownloadState
     progress: float | None
-    error_message: str | None
+    failure_code: FailureCode | None
     file_available: bool
 
 
@@ -97,7 +106,7 @@ class Download:
         self._lock = threading.Lock()
         self._state = DownloadState.PENDING
         self._progress: float | None = None
-        self._error_message: str | None = None
+        self._failure_code: FailureCode | None = None
         self._file_path: Path | None = None
         # True mientras el archivo esté en el servidor esperando a que el navegador lo recoja.
         self._file_available = False
@@ -112,7 +121,7 @@ class Download:
                 created_at=self.created_at,
                 state=self._state,
                 progress=self._progress,
-                error_message=self._error_message,
+                failure_code=self._failure_code,
                 file_available=self._file_available,
             )
 
@@ -136,6 +145,12 @@ class Download:
                 raise DownloadError("download_not_cancellable")
             self._state = DownloadState.CANCELLED
             self._progress = None
+
+    def ensure_retryable(self) -> None:
+        """Solo se reintenta lo que terminó sin archivo: Fallida o Cancelada."""
+        with self._lock:
+            if self._state not in _RETRYABLE:
+                raise DownloadError("download_not_retryable")
 
     def is_cancelled(self) -> bool:
         """Lo consulta la Fuente de vídeo para saber si debe abortar."""
@@ -162,13 +177,13 @@ class Download:
             self._file_available = True
             return True
 
-    def mark_failed(self, message: str) -> None:
+    def mark_failed(self, code: FailureCode) -> None:
         with self._lock:
             if self._state is DownloadState.CANCELLED:
                 return
             self._state = DownloadState.FAILED
             self._progress = None
-            self._error_message = message
+            self._failure_code = code
 
     def claim_file(self) -> Path:
         """Reserva el archivo para entregarlo. Solo la primera petición lo consigue."""
@@ -207,11 +222,21 @@ class DownloadManager:
         option = analysis.find_option(quality_option_id)
         if option is None:
             raise DownloadError("unknown_quality_option")
+        return self._enqueue(video_id, analysis.title, option)
+
+    def retry(self, download_id: int) -> DownloadSnapshot:
+        """Crea una Descarga nueva con el mismo Vídeo y Opción; la original no cambia.
+
+        No se repite el Análisis: se reutilizan el título y la Opción ya conocidos.
+        """
+        original = self._find(download_id)
+        original.ensure_retryable()
+        return self._enqueue(original.video_id, original.title, original.quality_option)
+
+    def _enqueue(self, video_id: str, title: str, option: QualityOption) -> DownloadSnapshot:
         with self._lock:
             download_id = next(self._ids)
-            download = Download(
-                download_id, video_id, analysis.title, option, self._temp_dir / str(download_id)
-            )
+            download = Download(download_id, video_id, title, option, self._temp_dir / str(download_id))
             self._downloads[download_id] = download
         self._queue.put(download)
         return download.snapshot()
@@ -264,10 +289,10 @@ class DownloadManager:
             )
         except FetchCancelledError:
             pass  # ya está Cancelada; solo queda borrar lo descargado
-        except Exception:
-            # Se registra la causa real en el log del servidor; el usuario ve un mensaje genérico.
+        except Exception as error:
+            # La causa técnica va al log del servidor; la web explica el código al usuario.
             logger.exception("La Descarga %s falló", download.id)
-            download.mark_failed("No se pudo completar la Descarga.")
+            download.mark_failed(source_error_code(error) or "unexpected_error")
         else:
             if download.mark_ready(path):
                 return  # Lista: el archivo se queda hasta que el navegador lo recoja

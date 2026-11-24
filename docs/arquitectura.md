@@ -119,6 +119,7 @@ Los cuatro primeros responden 422 (el problema es lo que se pidió); `source_fai
 | `download_not_ready` | 409 | Se pide el archivo de una Descarga que aún no está Lista. |
 | `file_already_collected` | 410 | El archivo ya se entregó (y se borró del servidor). |
 | `download_not_cancellable` | 409 | Se intenta cancelar una Descarga que ya terminó (Lista, Fallida o Cancelada). |
+| `download_not_retryable` | 409 | Se intenta reintentar una Descarga que no está Fallida ni Cancelada. |
 
 **Varios hilos a la vez.** Cada Descarga se ejecuta en un hilo aparte mientras otros hilos atienden las peticiones del navegador. Para que no se pisen, cada Descarga solo cambia a través de sus propios métodos, protegidos con un *lock* (un candado que solo un hilo puede tener a la vez), y hacia fuera se entregan copias coherentes. Por eso, por ejemplo, si llegan dos peticiones del archivo a la vez, solo la primera lo recibe.
 
@@ -149,7 +150,8 @@ stateDiagram-v2
 ```
 
 - **Lista, Fallida y Cancelada** son estados **terminales**: ya no cambian.
-- **Reintentar** no "resucita" una Descarga Fallida o Cancelada: crea una **Descarga nueva** con el mismo Vídeo y la misma Opción de calidad. Así cada Descarga tiene una historia simple y lineal.
+- **Reintentar** (`POST /api/downloads/{id}/retry`) no "resucita" una Descarga Fallida o Cancelada: crea una **Descarga nueva** con el mismo Vídeo y la misma Opción de calidad, sin repetir el Análisis. Así cada Descarga tiene una historia simple y lineal.
+- Una Descarga **Fallida** indica la causa con un código (`failure_code`) que la web traduce, igual que los errores de la API: `video_unavailable` (el Vídeo ya no es accesible), `source_failed` (falló YouTube/yt-dlp; probablemente hay que actualizar yt-dlp) o `unexpected_error` (el detalle técnico queda en el log del servidor). El backend nunca envía textos para el usuario: solo códigos.
 - Cuando una Descarga deja de trabajar (llega a Lista o Fallida, o aborta tras cancelarla), libera su hueco y la Pendiente más antigua arranca.
 - **Cancelar** (`POST /api/downloads/{id}/cancel`) la deja Cancelada al momento:
   - si estaba **Pendiente**, cuando le toque el turno el hilo se la salta sin descargar nada;
@@ -268,6 +270,6 @@ flowchart TB
 |---|---|
 | 1 · Piezas: Frontend, API, Análisis, Fuente de vídeo | #2 (esqueleto) ✅, #3 (rechazos) ✅ |
 | 2 · Recorrido completo y Gestor de Descargas | #4 (primera Descarga MP3) ✅, #5 (MP4) ✅ |
-| 3 · Estados: cola, cancelar, reintentar | #6 ✅, #7 ✅, #8 |
+| 3 · Estados: cola, cancelar, reintentar | #6 ✅, #7 ✅, #8 ✅ |
 | 3 · Limpieza y caducidad | #9 |
 | 4 · Docker y modo uso | #10 |

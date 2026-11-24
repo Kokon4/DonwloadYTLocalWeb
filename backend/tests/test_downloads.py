@@ -2,13 +2,14 @@ import time
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 from urllib.parse import unquote
 
 import pytest
 from fastapi.testclient import TestClient
 from httpx import Response
 
+from app.video_source import VideoSourceError, VideoUnavailableError
 from tests.conftest import MakeClient
 from tests.fakes import (
     SONG,
@@ -60,7 +61,7 @@ def test_mp3_download_is_created_becomes_ready_and_delivers_the_file(
     assert download["video_id"] == "dQw4w9WgXcQ"
     assert download["title"] == "Artista - Canción (Official Video)"
     assert download["quality_option"] == {"id": "mp3-192", "label": "MP3 · Alta (192 kbps)"}
-    assert download["error_message"] is None
+    assert download["failure_code"] is None
 
     ready = wait_for(client, download["id"], in_state("ready"))
     assert ready["file_available"] is True
@@ -197,7 +198,7 @@ def test_failure_while_fetching_leaves_the_download_failed(make_client: MakeClie
 
     failed = wait_for(client, create_download(client)["id"], in_state("failed"))
 
-    assert failed["error_message"]
+    assert failed["failure_code"] == "unexpected_error"
     assert failed["file_available"] is False
 
 
@@ -372,5 +373,91 @@ def test_finished_downloads_cannot_be_cancelled(make_client: MakeClient) -> None
 
 def test_cancelling_an_unknown_download_is_not_found(make_client: MakeClient) -> None:
     response = make_client().post("/api/downloads/999/cancel")
+
+    assert (response.status_code, response.json()) == (404, {"code": "download_not_found"})
+
+
+@pytest.mark.parametrize(
+    ("error", "code"),
+    [
+        (VideoUnavailableError("Private video"), "video_unavailable"),
+        (VideoSourceError("unable to extract"), "source_failed"),
+        (RuntimeError("ffmpeg: No space left on device"), "unexpected_error"),
+    ],
+)
+@pytest.mark.parametrize("fail_at", ["downloading", "converting"])
+def test_failed_download_tells_why_it_failed(
+    make_client: MakeClient,
+    error: Exception,
+    code: str,
+    fail_at: Literal["downloading", "converting"],
+) -> None:
+    source = FakeVideoSource({"dQw4w9WgXcQ": SONG}, fetch_error=error, fail_at=fail_at)
+    client = make_client(source)
+
+    failed = wait_for(client, create_download(client)["id"], in_state("failed"))
+
+    assert failed["failure_code"] == code
+    assert failed["file_available"] is False
+
+
+def retry(client: TestClient, download: dict[str, Any]) -> Response:
+    response: Response = client.post(f"/api/downloads/{download['id']}/retry")
+    return response
+
+
+def test_retrying_a_failed_download_creates_a_new_one_that_can_succeed(
+    make_client: MakeClient,
+) -> None:
+    source = FakeVideoSource(
+        {"dQw4w9WgXcQ": SONG}, fetch_error=VideoSourceError("corte de red"), fetch_error_times=1
+    )
+    client = make_client(source)
+    original = wait_for(client, create_download(client, "mp3-128")["id"], in_state("failed"))
+
+    response = retry(client, original)
+
+    assert response.status_code == 201
+    new = response.json()
+    assert new["id"] != original["id"]
+    assert (new["video_id"], new["title"], new["quality_option"]) == (
+        original["video_id"],
+        original["title"],
+        original["quality_option"],
+    )
+    assert new["failure_code"] is None
+    wait_for(client, new["id"], in_state("ready"))
+    assert client.get(f"/api/downloads/{original['id']}").json() == original
+
+
+def test_retrying_a_cancelled_download_creates_a_new_one(make_client: MakeClient) -> None:
+    source = paused_at("downloading")
+    client = make_client(source)
+    original = create_download(client)
+    cancel(client, original)
+
+    response = retry(client, original)
+
+    assert response.status_code == 201
+    source.release()
+    wait_for(client, response.json()["id"], in_state("ready"))
+    assert client.get(f"/api/downloads/{original['id']}").json()["state"] == "cancelled"
+
+
+def test_only_failed_or_cancelled_downloads_can_be_retried(make_client: MakeClient) -> None:
+    with five_downloads_three_running(make_client) as (client, source, downloads):
+        running, pending = downloads[0], downloads[4]
+        for download in (running, pending):
+            response = retry(client, download)
+            assert (response.status_code, response.json()) == (409, {"code": "download_not_retryable"})
+
+        source.release(5)
+        wait_for(client, running["id"], in_state("ready"))
+        response = retry(client, running)
+        assert (response.status_code, response.json()) == (409, {"code": "download_not_retryable"})
+
+
+def test_retrying_an_unknown_download_is_not_found(make_client: MakeClient) -> None:
+    response = make_client().post("/api/downloads/999/retry")
 
     assert (response.status_code, response.json()) == (404, {"code": "download_not_found"})

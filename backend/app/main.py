@@ -50,7 +50,7 @@ class DownloadResponse(BaseModel):
     quality_option: DownloadQualityOption
     state: str
     progress: float | None
-    error_message: str | None
+    failure_code: str | None
     file_available: bool
     created_at: datetime
 
@@ -65,7 +65,7 @@ class DownloadResponse(BaseModel):
             ),
             state=download.state.value,
             progress=download.progress,
-            error_message=download.error_message,
+            failure_code=download.failure_code,
             file_available=download.file_available,
             created_at=download.created_at,
         )
@@ -78,6 +78,7 @@ DOWNLOAD_ERROR_STATUS: dict[DownloadErrorCode, int] = {
     "download_not_ready": 409,
     "file_already_collected": 410,
     "download_not_cancellable": 409,
+    "download_not_retryable": 409,
 }
 
 
@@ -115,6 +116,10 @@ def create_app(video_source: VideoSource, temp_dir: Path) -> FastAPI:
     @app.post("/api/downloads/{download_id}/cancel")
     def cancel_download(download_id: int) -> DownloadResponse:
         return DownloadResponse.of(downloads.cancel(download_id))
+
+    @app.post("/api/downloads/{download_id}/retry", status_code=201)
+    def retry_download(download_id: int) -> DownloadResponse:
+        return DownloadResponse.of(downloads.retry(download_id))
 
     @app.get("/api/downloads/{download_id}/file")
     def download_file(download_id: int, background: BackgroundTasks) -> FileResponse:

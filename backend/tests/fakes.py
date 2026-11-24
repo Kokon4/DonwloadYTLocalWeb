@@ -40,11 +40,16 @@ class FakeVideoSource:
         videos: dict[str, VideoInfo | Exception],
         pause_at: PausePoint | None = None,
         fetch_error: Exception | None = None,
+        fetch_error_times: int | None = None,
+        fail_at: Literal["downloading", "converting"] = "downloading",
         late_events: Iterable[tuple[FetchPhase, float | None]] = (),
     ) -> None:
         self.videos = videos
         self.pause_at = pause_at
         self.fetch_error = fetch_error
+        # Cuántas obtenciones fallan con ``fetch_error`` (None: todas).
+        self._failures_left = fetch_error_times
+        self.fail_at = fail_at
         self.late_events = list(late_events)
         self._releases = threading.Semaphore(0)
 
@@ -57,10 +62,23 @@ class FakeVideoSource:
         if self.pause_at != point:
             return
         deadline = time.monotonic() + 5
-        while not self._releases.acquire(timeout=0.01):
+        while True:
             if interruptible and is_cancelled():
                 raise FetchCancelledError()
+            if self._releases.acquire(timeout=0.01):
+                break
             assert time.monotonic() < deadline, "el test no liberó la Fuente falsa"
+        if interruptible and is_cancelled():
+            # Se canceló justo mientras recibía el permiso: lo devuelve para otra obtención.
+            self._releases.release()
+            raise FetchCancelledError()
+
+    def _maybe_fail(self, point: Literal["downloading", "converting"]) -> None:
+        if self.fetch_error is None or self.fail_at != point or self._failures_left == 0:
+            return
+        if self._failures_left is not None:
+            self._failures_left -= 1
+        raise self.fetch_error
 
     def get_video_info(self, video_id: str) -> VideoInfo:
         result = self.videos[video_id]
@@ -80,9 +98,9 @@ class FakeVideoSource:
         self._checkpoint("start", is_cancelled)
         on_progress("downloading", 40.0)
         self._checkpoint("downloading", is_cancelled)
-        if self.fetch_error is not None:
-            raise self.fetch_error
+        self._maybe_fail("downloading")
         on_progress("converting", None)
+        self._maybe_fail("converting")
         for phase, percent in self.late_events:
             on_progress(phase, percent)
         self._checkpoint("converting", is_cancelled, interruptible=False)

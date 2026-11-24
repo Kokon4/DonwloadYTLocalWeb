@@ -1,8 +1,13 @@
 <script setup lang="ts">
-import { TERMINAL_STATES, type Download, type DownloadState } from '../api'
+import { RETRYABLE_STATES, TERMINAL_STATES, type Download, type DownloadState } from '../api'
+import { FAILURE_MESSAGES } from '../messages'
 
-defineProps<{ downloads: Download[]; cancelling: Set<number> }>()
-const emit = defineEmits<{ save: [download: Download]; cancel: [download: Download] }>()
+defineProps<{ downloads: Download[]; busy: Set<number> }>()
+const emit = defineEmits<{
+  save: [download: Download]
+  cancel: [download: Download]
+  retry: [download: Download]
+}>()
 
 // Nombres de los estados tal como aparecen en GLOSSARY.md.
 const STATE_LABELS: Record<DownloadState, string> = {
@@ -34,7 +39,9 @@ const STATE_LABELS: Record<DownloadState, string> = {
             :value="download.progress ?? undefined"
             max="100"
           />
-          <p v-if="download.error_message" class="error">{{ download.error_message }}</p>
+          <p v-if="download.failure_code" class="error">
+            {{ FAILURE_MESSAGES[download.failure_code] }}
+          </p>
         </div>
         <button
           v-if="download.state === 'ready' && download.file_available"
@@ -47,10 +54,19 @@ const STATE_LABELS: Record<DownloadState, string> = {
           v-else-if="!TERMINAL_STATES.includes(download.state)"
           type="button"
           class="secondary"
-          :disabled="cancelling.has(download.id)"
+          :disabled="busy.has(download.id)"
           @click="emit('cancel', download)"
         >
-          {{ cancelling.has(download.id) ? 'Cancelando…' : 'Cancelar' }}
+          {{ busy.has(download.id) ? 'Cancelando…' : 'Cancelar' }}
+        </button>
+        <button
+          v-else-if="RETRYABLE_STATES.includes(download.state)"
+          type="button"
+          class="secondary"
+          :disabled="busy.has(download.id)"
+          @click="emit('retry', download)"
+        >
+          {{ busy.has(download.id) ? 'Reintentando…' : 'Reintentar' }}
         </button>
       </li>
     </ul>

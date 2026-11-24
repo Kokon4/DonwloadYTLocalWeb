@@ -35,6 +35,7 @@ export type ApiErrorCode =
   | 'download_not_ready'
   | 'file_already_collected'
   | 'download_not_cancellable'
+  | 'download_not_retryable'
 
 /** Error de la API. Sin código cuando no responde el backend (caído o error inesperado). */
 export class ApiError extends Error {
@@ -80,6 +81,9 @@ async function apiErrorFrom(response: Response): Promise<ApiError> {
   return new ApiError(null)
 }
 
+/** Por qué falló una Descarga. Debe coincidir con FailureCode en backend/app/downloads.py. */
+export type FailureCode = 'live_not_supported' | 'video_unavailable' | 'source_failed' | 'unexpected_error'
+
 /** Estados de una Descarga (ver GLOSSARY.md). Debe coincidir con DownloadState en backend/app/downloads.py. */
 export type DownloadState =
   | 'pending'
@@ -100,7 +104,8 @@ export interface Download {
   state: DownloadState
   /** Porcentaje 0–100 mientras se descarga; null cuando no se conoce. */
   progress: number | null
-  error_message: string | null
+  /** Por qué falló (solo en Fallida); la web lo traduce con FAILURE_MESSAGES. */
+  failure_code: FailureCode | null
   /** True mientras el archivo espera en el servidor a que el navegador lo recoja. */
   file_available: boolean
   created_at: string
@@ -121,6 +126,14 @@ export async function createDownload(videoId: string, qualityOptionId: string): 
 export async function cancelDownload(download: Download): Promise<Download> {
   return request<Download>(`/api/downloads/${download.id}/cancel`, { method: 'POST' })
 }
+
+/** Crea una Descarga nueva con el mismo Vídeo y Opción que una Fallida o Cancelada. */
+export async function retryDownload(download: Download): Promise<Download> {
+  return request<Download>(`/api/downloads/${download.id}/retry`, { method: 'POST' })
+}
+
+/** Estados desde los que se puede Reintentar. */
+export const RETRYABLE_STATES: readonly DownloadState[] = ['failed', 'cancelled']
 
 export async function listDownloads(): Promise<Download[]> {
   return request<Download[]>('/api/downloads')
