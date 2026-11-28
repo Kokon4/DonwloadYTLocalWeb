@@ -1,0 +1,294 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Lección 1 · El mapa del sistema</title>
+  <link rel="stylesheet" href="../assets/style.css" />
+</head>
+<body>
+<main>
+  <p class="meta">Lección 1 · ~50 minutos · <a href="../reference/mapa-del-sistema.html">Hoja de referencia</a></p>
+  <h1>El mapa del sistema</h1>
+  <p class="subtitle">Qué pieza hace qué, por qué están separadas así, y cómo saber dónde va cada cambio.</p>
+
+  <div class="goal">
+    <strong>Lo que serás capaz de hacer al terminar</strong>
+    Ante cualquier cambio que te pidan en la app, decir <em>en qué pieza va y por qué</em>, sin mirar la documentación.
+    Es la habilidad que más se usa en un trabajo real: antes de escribir código, saber dónde tocar.
+  </div>
+
+  <h2>0 · Antes de leer: ¿qué recuerdas?</h2>
+  <p>
+    Esto no es un examen. Intentar recordar <em>antes</em> de estudiar (aunque falles) hace que lo que leas
+    después se quede mucho mejor. No mires el código ni la documentación.
+  </p>
+  <div class="exercise">
+    <span class="label">Ejercicio 0 · 3 min</span>
+    <p>Escribe las piezas del backend que recuerdes y, para cada una, qué hace en una frase.</p>
+    <textarea placeholder="Pieza: qué hace…"></textarea>
+    <p class="meta">Guárdalo: al final de la lección lo compararás con lo que has aprendido.</p>
+  </div>
+
+  <h2>1 · Las cinco piezas</h2>
+  <p>
+    La app tiene cinco piezas. Cada una tiene <strong>una sola razón para cambiar</strong>: esa es la idea que
+    hay detrás de toda la separación.
+  </p>
+  <div class="table-wrap">
+  <table>
+    <thead><tr><th>Pieza</th><th>Archivo</th><th>Responsabilidad</th><th>Cambia cuando…</th></tr></thead>
+    <tbody>
+      <tr><td><strong>Frontend</strong></td><td><code>frontend/src/</code></td><td>Lo que ves y pulsas; pregunta a la API cómo van las Descargas.</td><td>cambia la interfaz.</td></tr>
+      <tr><td><strong>API HTTP</strong></td><td><code>backend/app/main.py</code></td><td>Traduce peticiones HTTP a llamadas a las otras piezas, y errores a <code>{"code": …}</code>.</td><td>cambia el contrato con el navegador.</td></tr>
+      <tr><td><strong>Análisis</strong></td><td><code>analysis.py</code>, <code>links.py</code></td><td>Interpreta el enlace y decide qué Opciones de calidad se ofrecen.</td><td>cambian las reglas de qué se ofrece.</td></tr>
+      <tr><td><strong>Gestor de Descargas</strong></td><td><code>downloads.py</code></td><td>Crea Descargas, controla sus estados, la cola de 3, cancelar, reintentar, limpieza.</td><td>cambian las reglas de las Descargas.</td></tr>
+      <tr><td><strong>Fuente de vídeo</strong></td><td><code>video_source.py</code></td><td>El <em>único</em> sitio que habla con YouTube, yt-dlp y ffmpeg.</td><td>cambia YouTube o yt-dlp.</td></tr>
+    </tbody>
+  </table>
+  </div>
+  <p>
+    La última columna es la clave. YouTube cambia a menudo y rompe yt-dlp (lo verás en
+    <a href="../../docs/adr/0003-yt-dlp-fijado-con-actualizacion-en-un-paso.md">ADR 0003</a>).
+    Si todo lo que toca YouTube vive en <em>un</em> archivo, esos cambios no se propagan al resto.
+  </p>
+
+  <h3>Quién depende de quién</h3>
+  <p>Las flechas son <code>import</code>: «A → B» significa «A usa a B».</p>
+<pre><code>server.py ──► main.py (API HTTP) ──► downloads.py (Gestor) ──► analysis.py (Análisis) ──► links.py
+     │               │                      │                         │
+     └───────────────┴──────────────────────┴─────────────────────────┴──► video_source.py (Fuente)</code></pre>
+  <p>
+    Fíjate en una cosa: <code>video_source.py</code> <strong>no importa nada</strong> del resto de la app.
+    Todo depende de ella, y ella de nadie. Lo comprobarás tú mismo en el ejercicio 2.
+  </p>
+
+  <div class="exercise">
+    <span class="label">Ejercicio 1 · 5 min · en tu repo</span>
+    <p>Abre una terminal en la raíz del proyecto y ejecuta:</p>
+<pre><code>grep -n "^from app" backend/app/*.py</code></pre>
+    <p>Comprueba que las flechas del diagrama son correctas. ¿Hay alguna que falte o sobre?</p>
+    <textarea placeholder="Lo que he visto…"></textarea>
+    <details>
+      <summary>Ver solución</summary>
+      <p>Deberías ver que <code>video_source.py</code> y <code>links.py</code> no tienen ningún <code>from app…</code>;
+      <code>analysis.py</code> importa <code>links</code> y <code>video_source</code>; <code>downloads.py</code> importa
+      <code>analysis</code> y <code>video_source</code>; <code>main.py</code> importa los tres; y <code>server.py</code>
+      importa <code>main</code> y <code>video_source</code>. Las dependencias van siempre «hacia dentro», hacia la
+      Fuente de vídeo, y <strong>nunca hay ciclos</strong> (A usa B y B usa A). Si un día ves un ciclo, es señal
+      de que dos piezas se han mezclado.</p>
+    </details>
+  </div>
+
+  <h2>2 · Puertos y adaptadores</h2>
+  <p>
+    Esta forma de aislar lo externo tiene nombre: <strong>arquitectura hexagonal</strong> o
+    <strong>puertos y adaptadores</strong>, propuesta por Alistair Cockburn en 2005
+    (<a href="https://alistair.cockburn.us/hexagonal-architecture/">artículo original</a>). La idea:
+    la aplicación define <em>qué necesita</em> del exterior (un <strong>puerto</strong>), y cada forma concreta
+    de cumplirlo es un <strong>adaptador</strong>. Así la aplicación se puede ejecutar y testear sin lo externo.
+  </p>
+  <p>En tu proyecto:</p>
+  <ul>
+    <li><strong>Puerto:</strong> <code>VideoSource</code>, en <code>backend/app/video_source.py</code> (línea ~68). Dice
+      «necesito algo con <code>get_video_info()</code> y <code>fetch()</code>».</li>
+    <li><strong>Adaptador real:</strong> <code>YtDlpVideoSource</code>, en el mismo archivo (línea ~116). Lo cumple con yt-dlp.</li>
+    <li><strong>Adaptador de test:</strong> <code>FakeVideoSource</code>, en <code>backend/tests/fakes.py</code>. Lo cumple
+      sin internet, y el test lo controla (pararlo, hacerlo fallar…). En el vocabulario de Martin Fowler es un
+      <a href="https://martinfowler.com/bliki/TestDouble.html"><em>fake</em></a>: una implementación que funciona de verdad,
+      pero simplificada.</li>
+  </ul>
+
+  <div class="exercise">
+    <span class="label">Ejercicio 2 · 8 min · en tu repo</span>
+    <p>Abre <code>backend/app/video_source.py</code> y busca <code>class VideoSource(Protocol)</code>. Luego busca
+    <code>class YtDlpVideoSource</code>. Responde:</p>
+    <ol>
+      <li>¿<code>YtDlpVideoSource</code> hereda de <code>VideoSource</code>? (mira la línea de <code>class</code>)</li>
+      <li>Si no hereda, ¿cómo sabe mypy que lo cumple?</li>
+      <li>¿Qué ganarías y qué perderías si <code>FakeVideoSource</code> tuviera que heredar de una clase base?</li>
+    </ol>
+    <textarea placeholder="1. … 2. … 3. …"></textarea>
+    <details>
+      <summary>Ver solución</summary>
+      <ol>
+        <li>No. Es <code>class YtDlpVideoSource:</code> a secas.</li>
+        <li><code>Protocol</code> es <em>tipado estructural</em>: cualquier clase con los mismos métodos (mismos nombres y tipos)
+          cumple el puerto, sin declararlo. mypy lo comprueba donde se usa, por ejemplo al pasar
+          <code>YtDlpVideoSource()</code> a <code>create_app(video_source=…)</code> en <code>server.py</code>. Si le faltara
+          <code>fetch</code>, mypy fallaría ahí (pasó de verdad en el ticket #4).</li>
+        <li>Herencia (una clase base abstracta) hace explícito el vínculo, pero acopla: el test tendría que importar la clase
+          base de producción y heredar su comportamiento. Con <code>Protocol</code> el puerto es solo un «contrato» y los
+          adaptadores no se conocen entre sí. Ninguna opción es «la correcta»: es una decisión.</li>
+      </ol>
+    </details>
+  </div>
+
+  <h2>3 · ¿Quién decide qué adaptador se usa?</h2>
+  <p>
+    <code>create_app</code> (en <code>main.py</code>, línea ~92) <strong>no crea</strong> la Fuente de vídeo: la
+    <strong>recibe</strong> como parámetro, igual que la carpeta temporal y el reloj. Esto se llama
+    <strong>inyección de dependencias</strong>: en lugar de que una pieza construya lo que necesita, se lo pasan desde fuera.
+  </p>
+<pre><code># backend/app/server.py — la app de verdad
+app = create_app(video_source=YtDlpVideoSource(), temp_dir=TEMP_DIR, frontend_dir=FRONTEND_DIR)
+
+# backend/tests/conftest.py — la app de los tests
+create_app(video_source=source or FakeVideoSource({...}), temp_dir=tmp_path, clock=clock.now)</code></pre>
+  <p>
+    El único sitio donde se «enchufa» la pieza real es <code>server.py</code>. A ese sitio se le llama
+    <strong>raíz de composición</strong>: el punto donde se montan las piezas. Todo lo demás trabaja con el puerto.
+  </p>
+
+  <div class="exercise">
+    <span class="label">Ejercicio 3 · 6 min · predecir y comprobar</span>
+    <p>Antes de ejecutar nada, <strong>predice</strong>: ¿cuánto tardan los 71 tests del backend? ¿Necesitan internet?
+    Escribe tu predicción y el porqué. Después ejecútalo:</p>
+<pre><code>cd backend && .venv/bin/pytest -q</code></pre>
+    <textarea placeholder="Predicción: … porque …   Resultado real: …"></textarea>
+    <details>
+      <summary>Ver solución</summary>
+      <p>Unos 2-3 segundos y <strong>sin internet</strong> (puedes probar a desconectar la wifi y repetir). Es
+      posible porque ningún test usa <code>YtDlpVideoSource</code>: todos reciben <code>FakeVideoSource</code> por inyección.
+      Ese es el beneficio práctico de los puertos y adaptadores: tests rápidos, deterministas y que no se rompen cuando
+      YouTube cambia. El precio: el adaptador real <em>no</em> tiene tests automáticos (lo probamos a mano en cada ticket).
+      Es un trade-off consciente; lo verás en la lección 2.</p>
+    </details>
+  </div>
+
+  <h2>4 · La API es una capa fina</h2>
+  <p>
+    Abre <code>backend/app/main.py</code> y mira las funciones de las rutas (<code>analyze</code>,
+    <code>create_download</code>, <code>cancel_download</code>…). Casi todas tienen <strong>una sola línea</strong>:
+    llamar a la pieza que toca y convertir el resultado a JSON.
+  </p>
+<pre><code>@app.post("/api/downloads/{download_id}/cancel")
+def cancel_download(download_id: int) -> DownloadResponse:
+    return DownloadResponse.of(downloads.cancel(download_id))</code></pre>
+  <p>
+    ¿Por qué tan poco? Porque las reglas («solo se cancela lo que no ha terminado») viven en el Gestor de Descargas.
+    Si estuvieran en la ruta, y mañana quisieras usar la app desde una línea de comandos en vez de desde la web, tendrías
+    que duplicarlas. La revisión del ticket #2 detectó justo esto: las Opciones MP3 estaban en <code>main.py</code> y se
+    movieron al Análisis.
+  </p>
+
+  <h2>5 · Práctica: ¿dónde va cada cambio?</h2>
+  <p>Responde de memoria, sin volver arriba. El primer intento es el que cuenta.</p>
+  <div class="quiz" data-quiz>
+    <script type="application/json">
+    [
+      {
+        "q": "YouTube cambia cómo etiqueta las calidades (deja de usar «1080p»). ¿Dónde está el cambio?",
+        "options": ["En el módulo de Análisis", "En la capa API HTTP", "En la Fuente de vídeo", "En el Gestor de Descargas"],
+        "answer": 2,
+        "explain": "Leer los formatos que da YouTube (_h264_resolutions) es cosa de la Fuente de vídeo; el Análisis solo recibe números (1080, 720…) y no se entera."
+      },
+      {
+        "q": "Quieres dejar de ofrecer la Opción «MP3 · Ligera (128 kbps)».",
+        "options": ["En el módulo de Análisis", "En la Fuente de vídeo", "En el Gestor de Descargas", "En la capa API HTTP"],
+        "answer": 0,
+        "explain": "Qué Opciones de calidad se ofrecen lo decide el Análisis (MP3_OPTIONS en analysis.py). La Fuente sabe producir cualquier bitrate."
+      },
+      {
+        "q": "Quieres que avancen 5 Descargas a la vez en lugar de 3.",
+        "options": ["En la capa API HTTP", "En el módulo de Análisis", "En la Fuente de vídeo", "En el Gestor de Descargas"],
+        "answer": 3,
+        "explain": "MAX_PARALLEL_DOWNLOADS en downloads.py. Es una regla de las Descargas, no de YouTube ni del HTTP."
+      },
+      {
+        "q": "Quieres un endpoint nuevo GET /api/version que devuelva la versión de la app.",
+        "options": ["En el Gestor de Descargas", "En la capa API HTTP", "En el módulo de Análisis", "En la Fuente de vídeo"],
+        "answer": 1,
+        "explain": "Es una ruta nueva sin reglas de negocio: va en main.py. Si la versión de yt-dlp formara parte de la respuesta, la API se la pediría a la Fuente, sin leerla ella misma."
+      },
+      {
+        "q": "Quieres aceptar enlaces del tipo youtube.com/shorts/ID.",
+        "options": ["En la Fuente de vídeo", "En el Gestor de Descargas", "En el módulo de Análisis", "En la capa API HTTP"],
+        "answer": 2,
+        "explain": "Interpretar el enlace es parte del Análisis (links.py). La Fuente de vídeo recibe ya un video_id limpio."
+      },
+      {
+        "q": "¿Por qué los tests del backend no necesitan conexión a internet?",
+        "options": ["Porque FastAPI guarda en caché todas las respuestas de YouTube", "Porque pytest bloquea automáticamente todas las conexiones de red salientes", "Porque yt-dlp detecta que se está ejecutando dentro de pytest", "Porque la Fuente de vídeo se cambia por una falsa"],
+        "answer": 3,
+        "explain": "Inyección de dependencias: create_app recibe FakeVideoSource en los tests y YtDlpVideoSource en server.py."
+      },
+      {
+        "q": "¿Qué papel cumple backend/app/server.py?",
+        "options": ["Define las rutas HTTP que usa el navegador web", "Crea la app real conectándola con la Fuente yt-dlp", "Guarda el estado de las Descargas en un archivo", "Compila la web Vue para que FastAPI pueda servirla"],
+        "answer": 1,
+        "explain": "Es la raíz de composición: el único sitio donde se enchufan las piezas reales."
+      }
+    ]
+    </script>
+  </div>
+
+  <h2>6 · Desafío de diseño</h2>
+  <p>
+    Esta es la parte que más enseña, porque ahora decides tú. No hay una única respuesta buena.
+  </p>
+  <div class="exercise">
+    <span class="label">Ejercicio 4 · 12 min · diseño</span>
+    <p>Te piden que la app descargue también vídeos de <strong>Vimeo</strong>. Sin escribir código:</p>
+    <ol>
+      <li>¿Qué piezas cambian y cuáles no? Justifica cada una.</li>
+      <li>¿Crearías un adaptador nuevo (<code>VimeoVideoSource</code>) o ampliarías <code>YtDlpVideoSource</code>? (pista: yt-dlp también sabe descargar de Vimeo)</li>
+      <li>¿Qué documento del proyecto, que no es código, habría que cambiar antes de programar nada?</li>
+    </ol>
+    <textarea style="min-height: 10rem" placeholder="1. … 2. … 3. …"></textarea>
+    <details>
+      <summary>Ver una respuesta razonada (después de escribir la tuya)</summary>
+      <ol>
+        <li><strong>Análisis</strong> (<code>links.py</code>): aceptar enlaces de Vimeo y saber de qué sitio es cada uno. El
+          <code>video_id</code> ya no basta: hay que saber también el sitio. <strong>Fuente de vídeo</strong>: construir
+          la URL según el sitio; hoy está escrita a fuego como <code>youtube.com/watch?v=…</code>. Las <strong>Opciones de
+          calidad</strong> podrían cambiar, porque Vimeo no ofrece los mismos formatos. El <strong>Gestor de Descargas</strong>
+          y la <strong>API</strong> casi no cambian: es la prueba de que la separación funciona.</li>
+        <li>Ampliar <code>YtDlpVideoSource</code> es lo más sencillo, porque yt-dlp ya soporta los dos sitios. Un adaptador
+          por sitio solo compensaría si cada uno necesitara una librería distinta. Elegir lo más simple hasta que haga falta
+          otra cosa es buena práctica.</li>
+        <li>El <a href="../../GLOSSARY.md">glosario</a>: define «Vídeo» como «un único vídeo de YouTube». Y probablemente un
+          <strong>ADR</strong>, porque es una decisión de alcance difícil de revertir. Cambiar el lenguaje del dominio es
+          parte del diseño, no un detalle.</li>
+      </ol>
+    </details>
+  </div>
+
+  <h2>7 · Un matiz honesto</h2>
+  <p>
+    El puerto (<code>VideoSource</code>) y el adaptador real (<code>YtDlpVideoSource</code>) están en el <strong>mismo
+    archivo</strong>. En una arquitectura hexagonal estricta irían separados, para que nadie importe el adaptador por
+    accidente. Aquí se dejaron juntos porque el proyecto es pequeño y solo hay un adaptador real. Es una decisión
+    pragmática: <em>reconocer cuándo no aplicar un patrón al 100 %</em> también forma parte del oficio.
+  </p>
+
+  <h2>Cierre</h2>
+  <div class="exercise">
+    <span class="label">Ejercicio 5 · 3 min · vuelve al ejercicio 0</span>
+    <p>Compara lo que escribiste al principio con lo que sabes ahora. ¿Qué piezas se te habían olvidado o habías confundido?</p>
+    <textarea placeholder="Antes creía… ahora sé…"></textarea>
+  </div>
+
+  <div class="source">
+    <strong>Fuente principal para esta lección</strong>
+    <a href="https://alistair.cockburn.us/hexagonal-architecture/">Alistair Cockburn, «Hexagonal architecture» (2005)</a>.
+    Es el artículo original. Léelo pensando en la Fuente de vídeo como «el puerto hacia YouTube».
+    Complemento: <a href="https://martinfowler.com/bliki/TestDouble.html">Martin Fowler, «Test Double»</a>, sobre qué
+    es exactamente un <em>fake</em>.
+  </div>
+
+  <div class="ask">
+    <strong>Pregúntame lo que quieras</strong>
+    Soy tu profesor: si algo no ha quedado claro, o no estás de acuerdo con una respuesta, pregúntame en el chat.
+    Y cuando termines, cuéntame tu <strong>resultado del cuestionario</strong> y tus respuestas a los ejercicios 2 y 4.
+    Con eso preparo la siguiente lección a tu medida.
+  </div>
+
+  <nav class="lesson-nav">
+    <span></span>
+    <span>Siguiente: <em>Lección 2 · Tests en el seam</em> (se preparará según cómo te vaya esta)</span>
+  </nav>
+</main>
+<script src="../assets/quiz.js"></script>
+</body>
+</html>

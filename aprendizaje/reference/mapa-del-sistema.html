@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Referencia · Mapa del sistema</title>
+  <link rel="stylesheet" href="../assets/style.css" />
+</head>
+<body>
+<main>
+  <p class="meta">Hoja de referencia · de la <a href="../lessons/0001-mapa-del-sistema.html">Lección 1</a></p>
+  <h1>Mapa del sistema</h1>
+  <p class="subtitle">Dónde va cada cosa en DownloadYTLocalWeb, y por qué.</p>
+
+  <h2>Piezas</h2>
+  <div class="table-wrap">
+  <table>
+    <thead><tr><th>Pieza</th><th>Archivo</th><th>Decide</th><th>Cambia cuando…</th></tr></thead>
+    <tbody>
+      <tr><td>Frontend</td><td><code>frontend/src/</code></td><td>Qué ve el usuario; textos en español (<code>messages.ts</code>)</td><td>cambia la interfaz</td></tr>
+      <tr><td>API HTTP</td><td><code>main.py</code></td><td>Rutas, JSON, código HTTP de cada error</td><td>cambia el contrato con el navegador</td></tr>
+      <tr><td>Análisis</td><td><code>analysis.py</code>, <code>links.py</code></td><td>Qué enlaces valen; qué Opciones de calidad se ofrecen</td><td>cambian las reglas de qué se ofrece</td></tr>
+      <tr><td>Gestor de Descargas</td><td><code>downloads.py</code></td><td>Estados, cola de 3, cancelar, reintentar, limpieza</td><td>cambian las reglas de las Descargas</td></tr>
+      <tr><td>Fuente de vídeo</td><td><code>video_source.py</code></td><td>Cómo hablar con YouTube, yt-dlp y ffmpeg</td><td>cambia YouTube o yt-dlp</td></tr>
+      <tr><td>Raíz de composición</td><td><code>server.py</code></td><td>Qué piezas reales se enchufan</td><td>cambia la configuración de arranque</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <h2>Dependencias (imports)</h2>
+<pre><code>server ──► main ──► downloads ──► analysis ──► links
+  │          │          │             │
+  └──────────┴──────────┴─────────────┴──► video_source   (no importa nada de la app)</code></pre>
+  <p>Siempre hacia la Fuente de vídeo; nunca ciclos. Comprobar: <code>grep -n "^from app" backend/app/*.py</code></p>
+
+  <h2>Conceptos</h2>
+  <dl>
+    <dt><strong>Puerto</strong></dt>
+    <dd>Lo que la aplicación necesita del exterior, como contrato. Aquí: <code>VideoSource</code> (un <code>Protocol</code>).</dd>
+    <dt><strong>Adaptador</strong></dt>
+    <dd>Una forma concreta de cumplir un puerto. Real: <code>YtDlpVideoSource</code>. De test: <code>FakeVideoSource</code>.</dd>
+    <dt><strong>Fake</strong></dt>
+    <dd>Doble de test que funciona de verdad pero simplificado (<a href="https://martinfowler.com/bliki/TestDouble.html">Fowler</a>).</dd>
+    <dt><strong>Inyección de dependencias</strong></dt>
+    <dd>Pasar a una pieza lo que necesita en vez de que lo construya: <code>create_app(video_source=…, clock=…)</code>.</dd>
+    <dt><strong>Raíz de composición</strong></dt>
+    <dd>El único sitio donde se montan las piezas reales: <code>server.py</code>.</dd>
+    <dt><strong>Capa fina</strong></dt>
+    <dd>Una capa que solo traduce (HTTP ↔ llamadas) y no contiene reglas: <code>main.py</code>.</dd>
+  </dl>
+
+  <h2>Pregunta guía ante cualquier cambio</h2>
+  <blockquote>¿Por qué motivo cambia esto? → la pieza cuyo «cambia cuando…» coincida es donde va.</blockquote>
+
+  <p class="meta">Fuente: <a href="https://alistair.cockburn.us/hexagonal-architecture/">Cockburn, «Hexagonal architecture»</a> · Vocabulario del dominio: <a href="../../GLOSSARY.md">GLOSSARY.md</a></p>
+</main>
+</body>
+</html>
